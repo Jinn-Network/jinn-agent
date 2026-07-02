@@ -1,0 +1,233 @@
+"""jinn plugin — the Jinn-Hermes fork's single integration surface.
+
+Thin-fork discipline: everything that touches scrubbing, consent
+conversion, publishing, anchoring, the ledger or the corpus lives in the
+``@jinn-network/harness-layer`` package (the ``jinn-layer`` CLI); this
+plugin only:
+
+1. Runs the first-run consent flow (``/jinn consent``; exact copy from the
+   design artifact). Consent default is OFF — ``unset`` and ``declined``
+   both mean nothing is captured, nothing leaves the machine.
+2. Buffers the session's task trace (``pre_llm_call`` first turn +
+   ``post_tool_call`` steps) and, at ``on_session_end`` — only when consent
+   is ``accepted`` — hands the assembled task to ``jinn-layer``:
+   preview-gated first publish, per-task veto, fail-closed scrub inside
+   the layer.
+3. Exposes ``/jinn`` (status · consent · preview · ledger · veto) and
+   ``/corpus <query>`` (in-session corpus search).
+
+Upstream-merge procedure: see JINN.md at the repo root.
+"""
+
+from __future__ import annotations
+
+import logging
+import shlex
+import threading
+from pathlib import Path
+from typing import Any, Dict, Optional, Set
+
+from . import capture_buffer as buf
+from . import consent
+from . import jinn_layer
+
+logger = logging.getLogger(__name__)
+
+PUBLISH_FAILED_LINE = "publish failed — retained locally"
+
+_veto_lock = threading.Lock()
+_vetoed_tasks: Set[str] = set()
+_session_hint_shown: Set[str] = set()
+
+# Test seam: overridable subprocess runner (None = real jinn-layer binary).
+_runner: Optional[jinn_layer.Runner] = None
+
+
+def _pending_dir() -> Path:
+    return consent.get_hermes_home() / "jinn" / "pending"
+
+
+def _task_key(task_id: str, session_id: str) -> str:
+    return task_id or session_id or "default"
+
+
+# ── Hooks ────────────────────────────────────────────────────────────────────
+
+def _on_session_start(session_id: str = "", platform: str = "", **_: Any) -> None:
+    if consent.load_state().get("status") != consent.UNSET:
+        return
+    if session_id in _session_hint_shown:
+        return
+    _session_hint_shown.add(session_id)
+    # Never block a session with an interactive flow from inside a hook —
+    # surface the one-line hint; the flow itself runs via /jinn consent.
+    logger.info(
+        "jinn: contribution consent not set — capture is OFF. Run /jinn consent to decide."
+    )
+
+
+def _on_pre_llm_call(
+    session_id: str = "",
+    user_message: str = "",
+    is_first_turn: bool = False,
+    model: str = "",
+    platform: str = "",
+    task_id: str = "",
+    **_: Any,
+) -> None:
+    if not consent.capture_enabled():
+        return
+    if is_first_turn:
+        buf.record_first_turn(task_id, session_id, user_message, model, platform)
+
+
+def _on_post_tool_call(
+    tool_name: str = "",
+    args: Any = None,
+    session_id: str = "",
+    task_id: str = "",
+    tool_call_id: str = "",
+    result: Any = None,
+    duration_ms: Optional[int] = None,
+    **_: Any,
+) -> None:
+    if not consent.capture_enabled():
+        return
+    buf.record_tool_call(task_id, session_id, tool_name, tool_call_id, args, result, duration_ms)
+
+
+def _on_session_end(
+    session_id: str = "",
+    task_id: str = "",
+    completed: bool = False,
+    interrupted: bool = False,
+    **_: Any,
+) -> None:
+    if not consent.capture_enabled():
+        return
+    task = buf.assemble(task_id, session_id, completed, interrupted)
+    if task is None:
+        return
+
+    task_file = jinn_layer.write_task_file(task, _pending_dir(), session_id or task_id)
+
+    with _veto_lock:
+        vetoed = _task_key(task_id, session_id) in _vetoed_tasks
+        _vetoed_tasks.discard(_task_key(task_id, session_id))
+
+    if vetoed:
+        code, out = jinn_layer.publish(task_file, veto=True, runner=_runner)
+        if code == 0:
+            task_file.unlink(missing_ok=True)
+            logger.info("jinn: task vetoed — recorded locally, nothing published")
+        else:
+            logger.warning("jinn: veto record failed: %s", out)
+        return
+
+    if not consent.load_state().get("previewed"):
+        # Design rule: nothing publishes until the operator has previewed once.
+        logger.info(
+            "jinn: trace captured and held locally at %s — run /jinn preview to "
+            "see exactly what would publish, then it publishes on future task ends",
+            task_file,
+        )
+        return
+
+    code, out = jinn_layer.publish(task_file, runner=_runner)
+    if code == 0:
+        task_file.unlink(missing_ok=True)
+        logger.info("jinn: contribution published\n%s", out)
+    else:
+        logger.warning("jinn: %s (%s)\n%s", PUBLISH_FAILED_LINE, task_file, out)
+
+
+# ── Slash commands ───────────────────────────────────────────────────────────
+
+_JINN_HELP = (
+    "/jinn — Jinn layer\n"
+    "  /jinn status    consent + capture state\n"
+    "  /jinn consent   run the consent flow\n"
+    "  /jinn preview   preview the held (pending) trace exactly as it would publish\n"
+    "  /jinn ledger    the contribution ledger — what left this machine\n"
+    "  /jinn veto      withhold the current task (recorded locally, never published)\n"
+)
+
+
+def _latest_pending() -> Optional[Path]:
+    directory = _pending_dir()
+    if not directory.exists():
+        return None
+    files = sorted(directory.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+    return files[0] if files else None
+
+
+def _handle_jinn(command_args: str = "", session_id: str = "", task_id: str = "", **_: Any) -> str:
+    parts = shlex.split(command_args or "")
+    sub = parts[0] if parts else "status"
+
+    if sub == "status":
+        state = consent.load_state()
+        status = state.get("status")
+        lines = [f"consent: {status}"]
+        if status == consent.ACCEPTED:
+            lines.append(f"previewed: {'yes' if state.get('previewed') else 'no — first publish is held until /jinn preview'}")
+            lines.append("capture: ON — scrubbed task traces publish at task end")
+        else:
+            lines.append("capture: OFF — reader only, nothing leaves this machine")
+        pending = _latest_pending()
+        if pending:
+            lines.append(f"pending trace: {pending}")
+        return "\n".join(lines)
+
+    if sub == "consent":
+        collected: list[str] = []
+        status = consent.run_consent_flow(input, collected.append)
+        return "\n".join(collected + [f"(recorded: {status})"])
+
+    if sub == "preview":
+        pending = _latest_pending()
+        if pending is None:
+            return "No pending trace to preview — finish a task first."
+        code, out = jinn_layer.capture_preview(pending, runner=_runner)
+        if code == 0:
+            consent.mark_previewed()
+            return out + "\n\npreview recorded — future task ends publish automatically."
+        return f"preview failed:\n{out}"
+
+    if sub == "ledger":
+        code, out = jinn_layer.ledger(runner=_runner)
+        return out if code == 0 else f"ledger unavailable:\n{out}"
+
+    if sub == "veto":
+        with _veto_lock:
+            _vetoed_tasks.add(_task_key(task_id, session_id))
+        return "This task is vetoed — its trace stays on this machine (ledger will show: vetoed (local only))."
+
+    return _JINN_HELP
+
+
+def _handle_corpus(command_args: str = "", **_: Any) -> str:
+    query = (command_args or "").strip()
+    if not query:
+        return "usage: /corpus <query> — search the public corpus"
+    code, out = jinn_layer.corpus_search(query, runner=_runner)
+    return out if code == 0 else f"corpus search failed:\n{out}"
+
+
+# ── Registration ─────────────────────────────────────────────────────────────
+
+def register(ctx) -> None:
+    ctx.register_hook("on_session_start", _on_session_start)
+    ctx.register_hook("pre_llm_call", _on_pre_llm_call)
+    ctx.register_hook("post_tool_call", _on_post_tool_call)
+    ctx.register_hook("on_session_end", _on_session_end)
+    ctx.register_command(
+        "jinn",
+        handler=_handle_jinn,
+        description="Jinn layer: consent, preview, ledger, veto.",
+    )
+    ctx.register_command(
+        "corpus",
+        handler=_handle_corpus,
+        description="Search the public Jinn corpus.",
+    )
