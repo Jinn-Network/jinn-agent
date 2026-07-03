@@ -21,6 +21,25 @@ In-session: `/jinn consent` to decide about contributing (default: decline —
 reader only), `/corpus <query>` to search the network's knowledge,
 `/jinn ledger` for the receipt trail of anything that left your machine.
 
+## Coexists with a stock upstream install
+
+Already running the upstream agent? No conflict:
+
+- **Separate state home.** jinn-agent defaults to `~/.jinn-agent` (config,
+  auth, skills, memories, sessions) — it never reads or writes `~/.hermes`.
+  Corpus-installed skills therefore never leak into a stock install, and
+  version skew between the two cannot corrupt shared state. Override with
+  `JINN_AGENT_HOME`, or set `HERMES_HOME` explicitly to share state with a
+  stock install on purpose.
+- **Repo-local install.** `setup.sh` builds a venv inside this repo — no
+  global package, so an existing upstream install (and its `hermes` command)
+  is untouched.
+- **One caution:** don't hand both installs the same messaging-platform bot
+  tokens and run both gateways — the platform will get duplicate replies.
+  That's true of any two agent instances, not specific to this fork.
+
+Provider keys go in the jinn-agent home on first run (`~/.jinn-agent/.env`).
+
 ## What the Jinn layer adds — one integration surface
 
 The entire Jinn layer lives in **three paths**; no upstream file is modified:
