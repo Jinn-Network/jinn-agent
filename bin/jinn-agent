@@ -10,7 +10,44 @@ if [ -z "$HERMES_HOME" ]; then
 fi
 cd "$(dirname "$0")/.."
 # Prefer the repo-local venv the installer creates; fall back to system python.
+PY="python3"
 if [ -x "venv/bin/python" ]; then
-  exec venv/bin/python cli.py "$@"
+  PY="venv/bin/python"
 fi
-exec python3 cli.py "$@"
+# The upstream core loads standalone plugins opt-in via `plugins.enabled` in
+# $HERMES_HOME/config.yaml. The Jinn layer is this fork's point, so ensure it
+# is enabled on every launch — idempotent, additive, and it respects an
+# explicit user opt-out via `plugins.disabled`.
+"$PY" - <<'PYEOF'
+import os
+from pathlib import Path
+try:
+    import yaml
+except Exception:  # pyyaml unavailable (pre-setup run) — the core would not start anyway
+    raise SystemExit(0)
+
+home = Path(os.environ["HERMES_HOME"]).expanduser()
+home.mkdir(parents=True, exist_ok=True)
+path = home / "config.yaml"
+config = {}
+if path.exists():
+    try:
+        config = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        raise SystemExit(0)  # never touch a broken config — the core surfaces the error
+if not isinstance(config, dict):
+    raise SystemExit(0)
+plugins = config.setdefault("plugins", {})
+if not isinstance(plugins, dict):
+    raise SystemExit(0)
+if "jinn" in (plugins.get("disabled") or []):
+    raise SystemExit(0)  # explicit user opt-out wins
+enabled = plugins.get("enabled")
+if not isinstance(enabled, list):
+    enabled = []
+if "jinn" not in enabled:
+    enabled.append("jinn")
+    plugins["enabled"] = enabled
+    path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+PYEOF
+exec "$PY" cli.py "$@"
