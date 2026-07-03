@@ -237,7 +237,7 @@ def test_consent_flow_accept_requires_deliberate_confirm(isolated_home):
     status = consent.run_consent_flow(lambda _: next(answers), printed.append)
     assert status == consent.ACCEPTED
     assert consent.capture_enabled() is True
-    assert any("Nothing publishes until after you preview once" in line for line in printed)
+    assert any("Next: run /jinn preview after your first task" in line for line in printed)
 
 
 def test_consent_state_survives_reload(isolated_home):
@@ -316,3 +316,34 @@ def test_jinn_layer_not_found_points_at_canary_tag():
     assert code == 127
     assert "@jinn-network/client@canary" in out
     assert "JINN_LAYER_BIN" in out
+
+
+# ── Consent copy: current state + preview next-step (mono#1384) ──────────────
+
+def test_slash_consent_states_current_state_unset(isolated_home):
+    out = jinn._handle_jinn(command_args="consent")
+    first_line = out.splitlines()[0]
+    assert first_line == "Contribution is currently OFF (never asked)."
+    assert "jinn-agent is an open coding harness" in out
+
+
+def test_slash_consent_states_current_state_accepted(isolated_home):
+    consent.save_state(consent.ACCEPTED)
+    out = jinn._handle_jinn(command_args="consent")
+    assert out.splitlines()[0] == "Contribution is currently ON."
+    assert "jinn-agent is an open coding harness" in out
+
+
+def test_slash_consent_states_current_state_declined(isolated_home):
+    consent.save_state(consent.DECLINED)
+    out = jinn._handle_jinn(command_args="consent")
+    assert out.splitlines()[0] == "Contribution is currently OFF (declined)."
+    assert "jinn-agent is an open coding harness" in out
+
+
+def test_accept_confirm_names_preview_as_next_step(isolated_home):
+    out = jinn._handle_jinn(command_args="consent accept confirm")
+    assert "Contribution is ON" in out
+    assert "Next: run /jinn preview after your first task" in out
+    assert "run-a-node" not in out
+    assert "Nothing to do now" not in out
