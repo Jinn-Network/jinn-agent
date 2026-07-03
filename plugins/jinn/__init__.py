@@ -274,6 +274,10 @@ def _handle_jinn(command_args: str = "", session_id: str = "", task_id: str = ""
         return "\n".join(f"{row['slug']}  ({row['ref'] or 'ref unknown'})" for row in installed)
 
     if sub == "veto":
+        if not buf.has_steps(task_id, session_id):
+            # mono issue #1383 — vetoing nothing must not return the success
+            # copy: with no capture under way the mark would be a no-op.
+            return "No active task to veto — veto marks the task currently running in this session."
         with _veto_lock:
             _vetoed_tasks.add(_task_key(task_id, session_id))
         return "This task is vetoed — its trace stays on this machine (ledger will show: vetoed (local only))."
