@@ -178,22 +178,59 @@ def is_interactive_stdin() -> bool:
         return False
 
 
+def _setup_cli_names() -> tuple[str, str]:
+    """Return (command name, display name) for setup/first-run guidance.
+
+    jinn-agent fork patch (Jinn-Network/mono#1388): the recovery command the
+    no-key first-run screen tells the user to run must exist on their PATH.
+    The active skin's ``cli_name`` branding carries the fork's command name.
+    The first-run guard fires before ``cli.py``'s ``init_skin_from_config``,
+    so initialise the skin from config on demand (idempotent — cli.py runs
+    the same init later). Degrades to the upstream literals on any error;
+    the default skin declares no ``cli_name``, so default-skin output is
+    byte-identical.
+    """
+    cli = ""
+    try:
+        from hermes_cli.skin_engine import (
+            get_active_skin,
+            get_active_skin_name,
+            init_skin_from_config,
+        )
+
+        if get_active_skin_name() == "default":
+            from hermes_cli.config import load_config
+
+            init_skin_from_config(load_config())
+        cli = (get_active_skin().get_branding("cli_name", "") or "").strip()
+    except Exception:
+        cli = ""
+    if cli and cli != "hermes":
+        return cli, cli
+    return "hermes", "Hermes"
+
+
 def print_noninteractive_setup_guidance(reason: str | None = None) -> None:
     """Print guidance for headless/non-interactive setup flows."""
+    # jinn-agent fork patch (mono#1388): CLI/display names come from the
+    # active skin; the "⚕ " glyph is upstream chrome, kept for the default
+    # skin only (default-skin output byte-identical).
+    cmd, name = _setup_cli_names()
+    prefix = "⚕ " if cmd == "hermes" else ""
     print()
-    print(color("⚕ Hermes Setup — Non-interactive mode", Colors.CYAN, Colors.BOLD))
+    print(color(f"{prefix}{name} Setup — Non-interactive mode", Colors.CYAN, Colors.BOLD))
     print()
     if reason:
         print_info(reason)
     print_info("The interactive wizard cannot be used here.")
     print()
-    print_info("Configure Hermes using environment variables or config commands:")
-    print_info("  hermes config set model.provider custom")
-    print_info("  hermes config set model.base_url http://localhost:8080/v1")
-    print_info("  hermes config set model.default your-model-name")
+    print_info(f"Configure {name} using environment variables or config commands:")
+    print_info(f"  {cmd} config set model.provider custom")
+    print_info(f"  {cmd} config set model.base_url http://localhost:8080/v1")
+    print_info(f"  {cmd} config set model.default your-model-name")
     print()
     print_info("Or set OPENROUTER_API_KEY / OPENAI_API_KEY in your environment.")
-    print_info("Run 'hermes setup' in an interactive terminal to use the full wizard.")
+    print_info(f"Run '{cmd} setup' in an interactive terminal to use the full wizard.")
     print()
 
 
