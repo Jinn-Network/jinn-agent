@@ -34,7 +34,16 @@ restore_hermes_link() {
 }
 trap restore_hermes_link EXIT
 
-./setup-hermes.sh "$@"
+# The installer's LAST step is an interactive "run the wizard now?" read,
+# which fails (exit 1) without a TTY — after the install itself is done.
+# Judge success by the artifact the install exists to produce, not by
+# that exit code.
+INSTALL_STATUS=0
+./setup-hermes.sh "$@" || INSTALL_STATUS=$?
+if [ ! -x "$REPO_DIR/venv/bin/hermes" ]; then
+  echo "jinn-agent setup failed (installer exit $INSTALL_STATUS)" >&2
+  exit $(( INSTALL_STATUS ? INSTALL_STATUS : 1 ))
+fi
 
 mkdir -p "$LINK_DIR"
 ln -sf "$REPO_DIR/bin/jinn-agent" "$LINK_DIR/jinn-agent"
