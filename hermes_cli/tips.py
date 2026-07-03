@@ -474,6 +474,14 @@ TIPS = [
     'Dashboard plugins are served from /dashboard-plugins/<name>/ — drop files into ~/.hermes/dashboard-plugins/.',
 ]
 
+# --- jinn-agent fork tail (mono#1358): brand filter. Upstream list above is
+# --- untouched; merge conflicts resolve as upstream-list + this tail.
+# Drops OpenClaw-era tips (not applicable to this fork) and rebrands
+# capital-H "Hermes" to "jinn-agent". Lowercase `hermes <subcmd>` command
+# strings survive intentionally — they are functional, not branding.
+import re as _re
+TIPS[:] = [_re.sub(r"\bHermes\b", "jinn-agent", _tip) for _tip in TIPS if not _re.search(r"claw", _tip, _re.IGNORECASE)]
+
 
 def get_random_tip(exclude_recent: int = 0) -> str:
     """Return a random tip string.
