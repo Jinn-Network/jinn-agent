@@ -39,6 +39,13 @@ layer becomes the plugin for other harnesses, and upstream merges stay cheap.
   `publish failed — retained locally`.
 - `/jinn ledger` — what left this machine, with anchor links.
 - `/corpus <query>` — in-session corpus search.
+- **`/jinn skills install <ref>`** — install a corpus-published skill into
+  Hermes's native skills: `corpus get` → sha256 verification → SKILL.md
+  written to `$HERMES_HOME/skills/<slug>/`; Hermes's loader takes over.
+  Consuming is always allowed — no consent needed to install (consent gates
+  contributing, never reading). `/jinn skills list` / `uninstall <slug>`
+  manage jinn-installed skills only (a `.jinn-ref` marker fences them; a
+  user's own skills are never touched).
 
 Requires the `jinn-layer` CLI on PATH (`npm install -g @jinn-network/client`)
 or `JINN_LAYER_BIN` pointing at it. Testnet in v0.

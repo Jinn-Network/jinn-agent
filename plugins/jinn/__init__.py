@@ -30,6 +30,7 @@ from typing import Any, Dict, Optional, Set
 from . import capture_buffer as buf
 from . import consent
 from . import jinn_layer
+from . import skills_install
 
 logger = logging.getLogger(__name__)
 
@@ -150,6 +151,9 @@ _JINN_HELP = (
     "  /jinn preview   preview the held (pending) trace exactly as it would publish\n"
     "  /jinn ledger    the contribution ledger — what left this machine\n"
     "  /jinn veto      withhold the current task (recorded locally, never published)\n"
+    "  /jinn skills install <ref>   install a corpus-published skill into Hermes's skills\n"
+    "  /jinn skills list            jinn-installed skills\n"
+    "  /jinn skills uninstall <slug>  remove a jinn-installed skill\n"
 )
 
 
@@ -197,6 +201,30 @@ def _handle_jinn(command_args: str = "", session_id: str = "", task_id: str = ""
     if sub == "ledger":
         code, out = jinn_layer.ledger(runner=_runner)
         return out if code == 0 else f"ledger unavailable:\n{out}"
+
+    if sub == "skills":
+        # Consuming is always allowed — no consent check on this entire path.
+        action = parts[1] if len(parts) > 1 else "list"
+        if action == "install":
+            if len(parts) < 3:
+                return "usage: /jinn skills install <ref> (a corpus ref from /corpus search)"
+            try:
+                path = skills_install.install(parts[2], runner=_runner)
+            except Exception as exc:
+                return f"install failed: {exc}"
+            return f"installed — {path}\nHermes's skill loader picks it up from here."
+        if action == "uninstall":
+            if len(parts) < 3:
+                return "usage: /jinn skills uninstall <slug>"
+            try:
+                skills_install.uninstall(parts[2])
+            except Exception as exc:
+                return f"uninstall failed: {exc}"
+            return f"uninstalled {parts[2]}."
+        installed = skills_install.list_installed()
+        if not installed:
+            return "No jinn-installed skills. /corpus <query> to find some, then /jinn skills install <ref>."
+        return "\n".join(f"{row['slug']}  ({row['ref'] or 'ref unknown'})" for row in installed)
 
     if sub == "veto":
         with _veto_lock:
