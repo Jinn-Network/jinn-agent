@@ -505,8 +505,19 @@ def get_latest_release_tag(repo_dir: Optional[Path] = None) -> Optional[tuple]:
 
 
 def format_banner_version_label() -> str:
-    """Return the version label shown in the startup banner title."""
-    base = f"Hermes Agent v{VERSION} ({RELEASE_DATE})"
+    """Return the version label shown in the startup banner title.
+
+    The agent name comes from the active skin (jinn-agent fork, mono#1358);
+    the default skin's ``agent_name`` is "Hermes Agent", so default-skin
+    output is unchanged. Degrades to the literal on any skin-engine error,
+    matching the ``_skin_color`` precedent above.
+    """
+    try:
+        from hermes_cli.skin_engine import get_active_skin
+        agent_name = get_active_skin().get_branding("agent_name", "Hermes Agent")
+    except Exception:
+        agent_name = "Hermes Agent"
+    base = f"{agent_name} v{VERSION} ({RELEASE_DATE})"
     state = get_git_banner_state()
     if not state:
         return base
@@ -651,10 +662,15 @@ def build_welcome_banner(console: "Console", model: str, cwd: str,
         from hermes_cli.skin_engine import get_active_skin
         _bskin = get_active_skin()
         _hero = _bskin.banner_hero if hasattr(_bskin, 'banner_hero') and _bskin.banner_hero else HERMES_CADUCEUS
+        _credit = _bskin.get_branding("credit", "Nous Research")
     except Exception:
         _bskin = None
         _hero = HERMES_CADUCEUS
+        _credit = "Nous Research"
     left_lines = ["", _hero, ""]
+    # Skin-supplied credit line (jinn-agent fork, mono#1358). Rendered only
+    # when non-empty so a blank credit can't leave a dangling '·' separator.
+    _credit_seg = f" [dim {dim}]·[/] [dim {dim}]{_credit}[/]" if _credit else ""
     if (provider or "").strip().lower() == "moa":
         # MoA virtual provider: ``model`` is a preset name. Show the preset and
         # its aggregator so the banner is meaningful instead of a bare slug.
@@ -676,7 +692,7 @@ def build_welcome_banner(console: "Console", model: str, cwd: str,
             preset_name = preset_name[:25] + "..."
         agg_str = f" [dim {dim}]·[/] [dim {dim}]agg {agg_label}[/]" if agg_label else ""
         ctx_str = f" [dim {dim}]·[/] [dim {dim}]{_format_context_length(context_length)} context[/]" if context_length else ""
-        left_lines.append(f"[{accent}]MoA: {preset_name}[/]{agg_str}{ctx_str} [dim {dim}]·[/] [dim {dim}]Nous Research[/]")
+        left_lines.append(f"[{accent}]MoA: {preset_name}[/]{agg_str}{ctx_str}{_credit_seg}")
     else:
         model_short = model.split("/")[-1] if "/" in model else model
         if model_short.endswith(".gguf"):
@@ -684,7 +700,7 @@ def build_welcome_banner(console: "Console", model: str, cwd: str,
         if len(model_short) > 28:
             model_short = model_short[:25] + "..."
         ctx_str = f" [dim {dim}]·[/] [dim {dim}]{_format_context_length(context_length)} context[/]" if context_length else ""
-        left_lines.append(f"[{accent}]{model_short}[/]{ctx_str} [dim {dim}]·[/] [dim {dim}]Nous Research[/]")
+        left_lines.append(f"[{accent}]{model_short}[/]{ctx_str}{_credit_seg}")
 
     if os.getenv("HERMES_YOLO_MODE"):
         left_lines.append(f"[bold red]⚠ YOLO mode[/] [dim {dim}]— all approval prompts bypassed[/]")

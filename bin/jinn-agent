@@ -9,6 +9,8 @@ if [ -z "$HERMES_HOME" ]; then
   export HERMES_HOME="${JINN_AGENT_HOME:-$HOME/.jinn-agent}"
 fi
 cd "$(dirname "$0")/.."
+# Repo root for the ensure-block below (skin file lives in the repo).
+export JINN_AGENT_REPO="$PWD"
 # Prefer the repo-local venv the installer creates; fall back to system python.
 PY="python3"
 if [ -x "venv/bin/python" ]; then
@@ -17,7 +19,9 @@ fi
 # The upstream core loads standalone plugins opt-in via `plugins.enabled` in
 # $HERMES_HOME/config.yaml. The Jinn layer is this fork's point, so ensure it
 # is enabled on every launch — idempotent, additive, and it respects an
-# explicit user opt-out via `plugins.disabled`.
+# explicit user opt-out via `plugins.disabled`. The same block installs the
+# jinn skin and defaults fresh installs to it (mono#1358) — an explicit user
+# skin choice is never overwritten.
 "$PY" - <<'PYEOF'
 import os
 from pathlib import Path
@@ -28,6 +32,23 @@ except Exception:  # pyyaml unavailable (pre-setup run) — the core would not s
 
 home = Path(os.environ["HERMES_HOME"]).expanduser()
 home.mkdir(parents=True, exist_ok=True)
+
+# Skin install — config-independent (runs even under a plugin opt-out) so
+# the jinn-agent look never depends on the plugin. Sync whenever the
+# installed copy differs from the repo copy — the repo copy is canonical,
+# so local edits to skins/jinn.yaml are overwritten (customise under a
+# different skin name). Never block launch on a cosmetic failure.
+src = Path(os.environ.get("JINN_AGENT_REPO", ".")) / "plugins" / "jinn" / "skin" / "jinn.yaml"
+if src.is_file():
+    try:
+        content = src.read_text(encoding="utf-8")
+        dest = home / "skins" / "jinn.yaml"
+        if not dest.is_file() or dest.read_text(encoding="utf-8") != content:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(content, encoding="utf-8")
+    except Exception:
+        pass
+
 path = home / "config.yaml"
 config = {}
 if path.exists():
@@ -37,17 +58,48 @@ if path.exists():
         raise SystemExit(0)  # never touch a broken config — the core surfaces the error
 if not isinstance(config, dict):
     raise SystemExit(0)
+
+changed = False
+
+# 1. Plugin enablement — skipped (not exited) on explicit user opt-out via
+#    `plugins.disabled`, so the branding defaults below still apply.
 plugins = config.setdefault("plugins", {})
 if not isinstance(plugins, dict):
     raise SystemExit(0)
-if "jinn" in (plugins.get("disabled") or []):
-    raise SystemExit(0)  # explicit user opt-out wins
-enabled = plugins.get("enabled")
-if not isinstance(enabled, list):
-    enabled = []
-if "jinn" not in enabled:
-    enabled.append("jinn")
-    plugins["enabled"] = enabled
+if "jinn" not in (plugins.get("disabled") or []):
+    enabled = plugins.get("enabled")
+    if not isinstance(enabled, list):
+        enabled = []
+    if "jinn" not in enabled:
+        enabled.append("jinn")
+        plugins["enabled"] = enabled
+        changed = True
+
+# 2. Default skin — set only when the user has no explicit choice.
+display = config.get("display")
+if not isinstance(display, dict):
+    display = {}
+    config["display"] = display
+skin = display.get("skin")
+if not (isinstance(skin, str) and skin.strip()):
+    display["skin"] = "jinn"
+    changed = True
+
+# 3. Upstream's OpenClaw-residue first-run hint is meaningless on this fork
+#    (state lives in ~/.jinn-agent, `hermes claw migrate` is upstream-only).
+onboarding = config.get("onboarding")
+if not isinstance(onboarding, dict):
+    onboarding = {}
+    config["onboarding"] = onboarding
+seen = onboarding.get("seen")
+if not isinstance(seen, dict):
+    seen = {}
+    onboarding["seen"] = seen
+if not seen.get("openclaw_residue_cleanup"):
+    seen["openclaw_residue_cleanup"] = True
+    changed = True
+
+if changed:
     path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
 PYEOF
 # Dispatch through the hermes console entry (hermes_cli.main) — the only
