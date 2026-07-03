@@ -238,6 +238,64 @@ def test_drain_failure_leaves_file_and_still_drains_the_rest(tmp_path, monkeypat
     assert remaining == ["sA1.json"]
 
 
+# ── Session-end feedback lines (mono issue #1385) ───────────────────────────
+#
+# Capture/publish outcomes were logger.info-only (~/.jinn-agent/logs/
+# agent.log) — terminal-silent in both the TUI and -q modes. One concise
+# stderr line per outcome; the TUI's patch_stdout proxy renders stderr
+# above the input area, plain stderr everywhere else.
+
+def test_session_end_held_outcome_prints_stderr_line(isolated_home, capsys):
+    consent.save_state(consent.ACCEPTED)
+    _run_session()
+    err = capsys.readouterr().err
+    assert "jinn: trace held locally — /jinn preview to see what would publish" in err
+
+
+def test_session_end_published_outcome_prints_stderr_line_with_ref(isolated_home, capsys):
+    consent.save_state(consent.ACCEPTED, previewed=True)
+    isolated_home.out = (
+        "Published.\n"
+        "  ref       bafyTESTREF\n"
+        "  anchor    - (anchor tx pending)\n"
+        "  fetch it  jinn-layer corpus get bafyTESTREF"
+    )
+    _run_session()
+    err = capsys.readouterr().err
+    assert "jinn: contribution published — bafyTESTREF (/jinn ledger for the anchor)" in err
+
+
+def test_session_end_publish_failure_prints_stderr_line_with_path(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    capture_buffer.reset()
+    consent.save_state(consent.ACCEPTED, previewed=True)
+    jinn._runner = RunnerSpy(code=1, out="anchor tx reverted")
+    try:
+        _run_session()
+    finally:
+        jinn._runner = None
+    err = capsys.readouterr().err
+    kept = _pending_files(tmp_path)[0]
+    assert f"jinn: publish failed — trace kept at {kept}" in err
+
+
+def test_session_end_drain_prints_one_summary_line(isolated_home, capsys):
+    consent.save_state(consent.ACCEPTED)
+    _run_session(session_id="sA", task_id="tA")  # held
+    consent.mark_previewed()
+    capsys.readouterr()  # discard the held line
+    _run_session(session_id="sB", task_id="tB")  # publishes sB + drains sA
+    err = capsys.readouterr().err
+    assert "jinn: 1 held trace(s) published" in err
+    # At most 2 user-visible lines per session end.
+    assert len([l for l in err.splitlines() if l.startswith("jinn:")]) <= 2
+
+
+def test_session_end_without_capture_prints_nothing(isolated_home, capsys):
+    _run_session()  # consent unset — zero capture, zero terminal noise
+    assert capsys.readouterr().err == ""
+
+
 # ── Consent flow ─────────────────────────────────────────────────────────────
 
 def test_consent_flow_bare_enter_defaults_to_decline(isolated_home):
