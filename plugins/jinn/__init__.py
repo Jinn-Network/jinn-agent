@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import logging
 import shlex
+import sys
 import threading
 from pathlib import Path
 from typing import Any, Dict, Optional, Set
@@ -48,6 +49,38 @@ _runner: Optional[jinn_layer.Runner] = None
 
 def _pending_dir() -> Path:
     return consent.get_hermes_home() / "jinn" / "pending"
+
+
+def _user_line(msg: str) -> None:
+    """One user-visible session-end line (mono issue #1385).
+
+    ``logger.info`` lands in the log file only — terminal-silent in both
+    the TUI and ``-q`` modes, so operators got zero per-task feedback that
+    a trace was held or published. ``print(..., file=sys.stderr)`` is the
+    fork-adjacent precedent for operator-visible plugin output (see
+    plugins/memory/hindsight, issue #13125): while the TUI runs,
+    prompt_toolkit's ``patch_stdout`` proxies stderr and renders the line
+    above the input area (the app is ``full_screen=False``); at shutdown
+    and in ``-q`` mode it is plain stderr. Never raise from here — a
+    feedback line must not break a session end.
+    """
+    try:
+        print(msg, file=sys.stderr, flush=True)
+    except Exception:
+        pass
+
+
+def _published_ref(out: str) -> str:
+    """Extract the envelopeRef from jinn-layer publish output.
+
+    Success output is ``Published.\\n  ref       <envelopeRef>\\n  …``
+    (harness-layer cli.ts). Empty string when absent — callers omit it.
+    """
+    for line in (out or "").splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[0] == "ref":
+            return parts[1]
+    return ""
 
 
 def _task_key(task_id: str, session_id: str) -> str:
@@ -139,14 +172,22 @@ def _on_session_end(
             "see exactly what would publish, then it publishes on future task ends",
             task_file,
         )
+        _user_line("jinn: trace held locally — /jinn preview to see what would publish")
         return
 
     code, out = jinn_layer.publish(task_file, runner=_runner)
     if code == 0:
         task_file.unlink(missing_ok=True)
         logger.info("jinn: contribution published\n%s", out)
+        ref = _published_ref(out)
+        _user_line(
+            f"jinn: contribution published — {ref} (/jinn ledger for the anchor)"
+            if ref
+            else "jinn: contribution published (/jinn ledger for the anchor)"
+        )
     else:
         logger.warning("jinn: %s (%s)\n%s", PUBLISH_FAILED_LINE, task_file, out)
+        _user_line(f"jinn: publish failed — trace kept at {task_file}")
 
     _drain_pending(task_file)
 
@@ -171,16 +212,22 @@ def _drain_pending(current: Path) -> None:
         )
     except OSError:
         return
+    drained = 0
     for path in held:
         try:
             code, out = jinn_layer.publish(path, runner=_runner)
             if code == 0:
                 path.unlink(missing_ok=True)
+                drained += 1
                 logger.info("jinn: held contribution published\n%s", out)
             else:
                 logger.warning("jinn: %s (%s)\n%s", PUBLISH_FAILED_LINE, path, out)
         except Exception:
             logger.warning("jinn: %s (%s)", PUBLISH_FAILED_LINE, path, exc_info=True)
+    if drained:
+        # One summary line for the whole drain — with the current task's own
+        # line above, a session end emits at most 2 user-visible lines.
+        _user_line(f"jinn: {drained} held trace(s) published")
 
 
 # ── Slash commands ───────────────────────────────────────────────────────────
