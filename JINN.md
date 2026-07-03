@@ -63,12 +63,16 @@ Every other upstream file is unmodified.
 | `tests/plugins/test_jinn_branding.py` | Runtime-branding regression tests (mono#1358) — first screen says jinn-agent, no upstream brand words in default session chrome |
 | `JINN.md` | This document |
 
-Accepted branding residuals (deliberately NOT owned — `cli.py` stays
-unmodified): the `<30`-column tiny-terminal compact-banner fallback in
-`cli.py` (~line 3490) still reads `- Nous Research`, and the
-`HERMES_FAST_STARTUP_BANNER=1` fast path builds a literal `Hermes Agent
-v…` label. Both are off the default cold-start path; owning `cli.py` for
-them would violate thin-fork discipline.
+Accepted branding residuals (deliberately NOT owned — `cli.py` and
+`hermes_cli/main.py` stay unmodified): the `<30`-column tiny-terminal
+compact-banner fallback in `cli.py` (~line 3490) still reads `- Nous
+Research`; the `HERMES_FAST_STARTUP_BANNER=1` fast path builds a literal
+`Hermes Agent v…` label; and `jinn-agent --version` / `jinn-agent version`
+print `Hermes Agent v…` because the version fast paths in
+`hermes_cli/main.py` run before `init_skin_from_config`, so the skin-aware
+version label reads the default skin. All three are off the default
+cold-start path; owning `cli.py` or `main.py` for them would violate
+thin-fork discipline.
 
 Everything that touches scrubbing, consent conversion, publishing, anchoring,
 the ledger or the corpus lives in the **`@jinn-network/harness-layer`

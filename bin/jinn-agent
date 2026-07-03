@@ -34,8 +34,10 @@ home = Path(os.environ["HERMES_HOME"]).expanduser()
 home.mkdir(parents=True, exist_ok=True)
 
 # Skin install — config-independent (runs even under a plugin opt-out) so
-# the jinn-agent look never depends on the plugin. Copy when missing or
-# when the repo copy changed; never block launch on a cosmetic failure.
+# the jinn-agent look never depends on the plugin. Sync whenever the
+# installed copy differs from the repo copy — the repo copy is canonical,
+# so local edits to skins/jinn.yaml are overwritten (customise under a
+# different skin name). Never block launch on a cosmetic failure.
 src = Path(os.environ.get("JINN_AGENT_REPO", ".")) / "plugins" / "jinn" / "skin" / "jinn.yaml"
 if src.is_file():
     try:
