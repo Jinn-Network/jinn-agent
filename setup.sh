@@ -45,6 +45,31 @@ if [ ! -x "$REPO_DIR/venv/bin/hermes" ]; then
   exit $(( INSTALL_STATUS ? INSTALL_STATUS : 1 ))
 fi
 
+# Ensure the tirith security scanner is present at install time so the
+# first session does not start degraded (mono#1359). Non-fatal: offline
+# installs degrade with a clear message; the runtime retries later.
+if ! "$REPO_DIR/venv/bin/python" - <<'PY'
+import os, shutil, sys
+from tools import tirith_security as ts
+if not ts.is_platform_supported():
+    print("tirith: no prebuilt binary for this platform; command scanning uses pattern matching.")
+    sys.exit(0)
+local = os.path.join(ts._hermes_bin_dir(), "tirith")
+found = shutil.which("tirith") or (local if os.path.isfile(local) and os.access(local, os.X_OK) else None)
+if found:
+    print(f"tirith present: {found}")
+    sys.exit(0)
+installed, reason = ts._install_tirith()
+if installed:
+    print(f"tirith installed: {installed}")
+    sys.exit(0)
+print(f"tirith install failed ({reason})", file=sys.stderr)
+sys.exit(1)
+PY
+then
+  echo "warning: tirith security scanner not installed — sessions will fall back to pattern-matching command scanning and retry the download automatically." >&2
+fi
+
 mkdir -p "$LINK_DIR"
 ln -sf "$REPO_DIR/bin/jinn-agent" "$LINK_DIR/jinn-agent"
 

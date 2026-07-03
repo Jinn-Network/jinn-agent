@@ -37,9 +37,24 @@ echo "$HERMES_HOME" > "$(dirname "$0")/recorded-home"
 mkdir -p "$(dirname "$0")/venv/bin"
 printf '#!/bin/sh\\n' > "$(dirname "$0")/venv/bin/hermes"
 chmod +x "$(dirname "$0")/venv/bin/hermes"
+# Stub venv python: records whatever program setup.sh pipes into it
+# (the tirith ensure step) so tests can assert the step ran. NO network.
+cat > "$(dirname "$0")/venv/bin/python" <<'PYSTUB'
+#!/bin/sh
+cat > "$(cd "$(dirname "$0")/../.." && pwd)/recorded-tirith-ensure"
+exit 0
+PYSTUB
+chmod +x "$(dirname "$0")/venv/bin/python"
 mkdir -p "$HOME/.local/bin"
 ln -sf "$(cd "$(dirname "$0")" && pwd)/venv/bin/hermes" "$HOME/.local/bin/hermes"
 """
+
+# Same installer, but the venv python fails: simulates an offline install
+# where the tirith download cannot complete.
+STUB_INSTALLER_TIRITH_FAILS = STUB_INSTALLER.replace(
+    'cat > "$(cd "$(dirname "$0")/../.." && pwd)/recorded-tirith-ensure"\nexit 0',
+    "exit 1",
+)
 
 
 @pytest.fixture()
@@ -157,6 +172,39 @@ def test_trailing_wizard_prompt_failure_does_not_abort_the_fork_steps(sandbox):
     assert "jinn-agent" in result.stdout
     hermes_link = home / ".local" / "bin" / "hermes"
     assert not hermes_link.exists() and not hermes_link.is_symlink()
+
+
+# --- tirith at setup time (mono#1359) -------------------------------------
+# setup.sh must ensure the tirith security scanner is installed, so the
+# first session does not start with "command scanning will use pattern
+# matching only". Offline installs degrade with a clear message, non-fatally.
+
+
+def test_setup_invokes_the_tirith_ensure_step(sandbox):
+    home, repo = sandbox
+    result = _run(home, repo)
+    assert result.returncode == 0, result.stderr
+    recorded = repo / "recorded-tirith-ensure"
+    assert recorded.exists(), "setup.sh never ran the tirith ensure step"
+    program = recorded.read_text()
+    assert "tirith" in program
+    assert "_install_tirith" in program
+
+
+def test_tirith_install_failure_degrades_without_failing_setup(sandbox):
+    home, repo = sandbox
+    (repo / "setup-hermes.sh").write_text(
+        STUB_INSTALLER_TIRITH_FAILS, encoding="utf-8"
+    )
+    result = _run(home, repo)
+    assert result.returncode == 0, result.stderr
+    link = home / ".local" / "bin" / "jinn-agent"
+    assert link.is_symlink(), "tirith failure must not abort the fork steps"
+    combined = result.stdout + result.stderr
+    assert "tirith" in combined
+    assert "pattern-matching" in combined, (
+        "offline installs must degrade with a clear message"
+    )
 
 
 def test_next_steps_name_only_fork_commands(sandbox):
