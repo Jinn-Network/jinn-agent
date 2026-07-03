@@ -36,7 +36,7 @@ DECLINED = "declined"
 # ── Exact copy (design artifact) ─────────────────────────────────────────────
 
 OPENING = (
-    "jinn-layer is an open coding harness. When it finishes a task it can "
+    "jinn-agent is an open coding harness. When it finishes a task it can "
     "publish a scrubbed trace of that task to a public corpus — the shared "
     "record that trains the harness everyone runs."
 )
@@ -55,7 +55,7 @@ WHAT_LEAVES = [
     "You can veto any task, and preview the exact payload before the first send.",
 ]
 
-DECLINE_LINE = "Decline and jinn-layer still works fully — as a reader."
+DECLINE_LINE = "Decline and jinn-agent still works fully — as a reader."
 
 CONFIRM_ACCEPT = (
     "Turn on contribution? Every task this harness runs will be scrubbed and "

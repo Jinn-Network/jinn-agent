@@ -1,16 +1,34 @@
-# Jinn-Hermes — the Jinn harness fork
+# jinn-agent — the Jinn harness
 
-This repository is a **thin fork** of [NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent):
-upstream Hermes plus the Jinn layer pre-wired. Spec: `spec/2026-07-02-jinn-harness-network.md`
-in [Jinn-Network/mono](https://github.com/Jinn-Network/mono) (decisions D1/D2), issue #1312.
+**jinn-agent** is an open coding harness plugged into the Jinn network: it
+reads from the public corpus, and (with consent) contributes scrubbed task
+traces back to it. The product name is `jinn-agent`, everywhere a human
+looks; this repository is technically a thin fork of an upstream agent core
+([NousResearch/hermes-agent](https://github.com/NousResearch/hermes-agent))
+— that name is provenance, not product, and no user-facing surface should
+use it. Spec: `spec/2026-07-02-jinn-harness-network.md` in
+[Jinn-Network/mono](https://github.com/Jinn-Network/mono) (decisions D1/D2),
+issue #1312.
 
-## What the fork adds — one integration surface
+## Run
+
+```bash
+./setup-hermes.sh     # one-time: upstream core's installer (deps, sandboxing)
+bin/jinn-agent        # start the harness
+```
+
+In-session: `/jinn consent` to decide about contributing (default: decline —
+reader only), `/corpus <query>` to search the network's knowledge,
+`/jinn ledger` for the receipt trail of anything that left your machine.
+
+## What the Jinn layer adds — one integration surface
 
 The entire Jinn layer lives in **three paths**; no upstream file is modified:
 
 | Path | What it is |
 |---|---|
-| `plugins/jinn/` | The integration surface: first-run consent flow, capture buffer, `jinn-layer` subprocess wrapper, `/jinn` + `/corpus` slash commands |
+| `bin/jinn-agent` | The human-facing entrypoint |
+| `plugins/jinn/` | The integration surface: first-run consent flow, capture buffer + payload-agnostic pickup, `jinn-layer` subprocess wrapper, agent tools, `/jinn` + `/corpus` slash commands |
 | `tests/plugins/test_jinn_plugin.py` | Consent-gating integration tests |
 | `JINN.md` | This document |
 

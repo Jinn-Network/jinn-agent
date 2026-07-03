@@ -1,0 +1,5 @@
+#!/bin/sh
+# jinn-agent — the Jinn harness. Single human-facing entrypoint.
+# (Internally this launches the agent core this repo is forked from; users
+# never need to know or type that name.)
+cd "$(dirname "$0")/.." && exec python3 cli.py "$@"

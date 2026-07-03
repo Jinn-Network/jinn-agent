@@ -105,7 +105,7 @@ def test_accepted_but_unpreviewed_holds_locally(isolated_home, tmp_path):
     assert task["provenance"] == "contributed"
     assert task["outcome"] == {"status": "completed", "verifiabilityTier": "user-accepted"}
     assert task["task"]["summary"] == "Fix the failing test suite"
-    assert task["environment"]["harness"]["name"] == "jinn-hermes"
+    assert task["environment"]["harness"]["name"] == "jinn-agent"
     assert task["steps"][0]["name"] == "tool:terminal"
 
 

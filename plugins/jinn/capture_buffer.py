@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional
 _lock = threading.Lock()
 _buffers: Dict[str, Dict[str, Any]] = {}
 
-HARNESS_NAME = "jinn-hermes"
+HARNESS_NAME = "jinn-agent"
 HARNESS_VERSION = "0.1.0"
 
 
