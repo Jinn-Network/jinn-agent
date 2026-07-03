@@ -148,6 +148,40 @@ def _on_session_end(
     else:
         logger.warning("jinn: %s (%s)\n%s", PUBLISH_FAILED_LINE, task_file, out)
 
+    _drain_pending(task_file)
+
+
+def _drain_pending(current: Path) -> None:
+    """Publish traces held in the pending dir by earlier session ends.
+
+    The preview gate holds pre-preview tasks with the promise "then it
+    publishes on future task ends" — this drain keeps that promise
+    (mono issue #1370). Runs only from the publishing path of
+    ``_on_session_end`` (consent accepted + previewed), so vetoed files
+    are never drained: a veto is recorded and unlinked in the veto branch
+    above, which returns early before any drain — acceptable, because the
+    drain simply happens on the next publishing session end. Failures are
+    logged and the file left for a retry at a later session end; a drain
+    must never raise or block the session end.
+    """
+    try:
+        held = sorted(
+            (p for p in _pending_dir().glob("*.json") if p != current),
+            key=lambda p: p.stat().st_mtime,
+        )
+    except OSError:
+        return
+    for path in held:
+        try:
+            code, out = jinn_layer.publish(path, runner=_runner)
+            if code == 0:
+                path.unlink(missing_ok=True)
+                logger.info("jinn: held contribution published\n%s", out)
+            else:
+                logger.warning("jinn: %s (%s)\n%s", PUBLISH_FAILED_LINE, path, out)
+        except Exception:
+            logger.warning("jinn: %s (%s)", PUBLISH_FAILED_LINE, path, exc_info=True)
+
 
 # ── Slash commands ───────────────────────────────────────────────────────────
 
