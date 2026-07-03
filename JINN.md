@@ -42,7 +42,12 @@ Provider keys go in the jinn-agent home on first run (`~/.jinn-agent/.env`).
 
 ## What the Jinn layer adds — one integration surface
 
-The entire Jinn layer lives in **three paths**; no upstream file is modified:
+The entire Jinn layer lives in the paths below. **One upstream file is
+deliberately owned by the fork: `README.md`** (the repo's human-facing front
+page must describe jinn-agent, not the upstream core — upstream's README
+remains available at the upstream repo). Every other upstream file is
+unmodified; on upstream merges, a `README.md` conflict always resolves to
+ours.
 
 | Path | What it is |
 |---|---|
@@ -113,10 +118,10 @@ git checkout jinn-layer
 git merge upstream/main
 ```
 
-**Expected conflicts: none.** The Jinn layer adds files only (`plugins/jinn/`,
-`tests/plugins/test_jinn_plugin.py`, `JINN.md`) and modifies zero upstream
-files, so a clean upstream merge cannot conflict outside the integration
-surface. If a merge ever conflicts on an upstream file, that is a thin-fork
+**Expected conflicts: `README.md` only** (deliberately owned — resolve as
+ours: `git checkout --ours README.md`). The Jinn layer otherwise adds files
+only and modifies zero upstream files, so nothing else can conflict outside
+the integration surface. If a merge ever conflicts on an upstream file, that is a thin-fork
 regression — record it in the merge PR and move the offending change into the
 plugin or the harness-layer package.
 
