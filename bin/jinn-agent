@@ -8,13 +8,16 @@
 if [ -z "$HERMES_HOME" ]; then
   export HERMES_HOME="${JINN_AGENT_HOME:-$HOME/.jinn-agent}"
 fi
+# The agent must run in the directory the user invoked jinn-agent from
+# (mono#1369) — remember it before cd'ing into the repo for the setup steps.
+USER_PWD="$PWD"
 cd "$(dirname "$0")/.."
 # Repo root for the ensure-block below (skin file lives in the repo).
 export JINN_AGENT_REPO="$PWD"
 # Prefer the repo-local venv the installer creates; fall back to system python.
 PY="python3"
 if [ -x "venv/bin/python" ]; then
-  PY="venv/bin/python"
+  PY="$JINN_AGENT_REPO/venv/bin/python"
 fi
 # The upstream core loads standalone plugins opt-in via `plugins.enabled` in
 # $HERMES_HOME/config.yaml. The Jinn layer is this fork's point, so ensure it
@@ -102,14 +105,17 @@ if not seen.get("openclaw_residue_cleanup"):
 if changed:
     path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
 PYEOF
+# Return to the invoking directory before exec — sessions run where the
+# user launched jinn-agent, never inside the repo clone (mono#1369).
+cd "$USER_PWD"
 # Dispatch through the hermes console entry (hermes_cli.main) — the only
 # surface carrying the full CLI: subcommands (setup, status, doctor, …) and
 # the non-interactive single-query flags (chat -q PROMPT -Q --yolo). The
 # bare TUI parser reached by exec'ing the top-level script directly has
 # none of those (mono#1361).
 for ENV_DIR in venv .venv; do
-  if [ -x "$ENV_DIR/bin/hermes" ]; then
-    exec "$ENV_DIR/bin/hermes" "$@"
+  if [ -x "$JINN_AGENT_REPO/$ENV_DIR/bin/hermes" ]; then
+    exec "$JINN_AGENT_REPO/$ENV_DIR/bin/hermes" "$@"
   fi
 done
-exec "$PY" -c 'import sys; from hermes_cli.main import main; sys.exit(main())' "$@"
+exec "$PY" -c 'import os, sys; sys.path.insert(0, os.environ["JINN_AGENT_REPO"]); from hermes_cli.main import main; sys.exit(main())' "$@"
