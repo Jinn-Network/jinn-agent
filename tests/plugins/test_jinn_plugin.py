@@ -45,7 +45,7 @@ def isolated_home(tmp_path, monkeypatch):
     jinn._runner = None
 
 
-def _run_session(session_id: str = "s1", task_id: str = "t1", completed: bool = True):
+def _start_session(session_id: str = "s1", task_id: str = "t1"):
     jinn._on_pre_llm_call(
         session_id=session_id,
         task_id=task_id,
@@ -63,6 +63,10 @@ def _run_session(session_id: str = "s1", task_id: str = "t1", completed: bool = 
         result='{"output": "1 failed"}',
         duration_ms=50,
     )
+
+
+def _run_session(session_id: str = "s1", task_id: str = "t1", completed: bool = True):
+    _start_session(session_id=session_id, task_id=task_id)
     jinn._on_session_end(
         session_id=session_id, task_id=task_id, completed=completed, interrupted=False
     )
@@ -123,12 +127,26 @@ def test_accepted_and_previewed_publishes(isolated_home, tmp_path):
 
 def test_veto_records_locally_and_never_publishes_content(isolated_home, tmp_path):
     consent.save_state(consent.ACCEPTED, previewed=True)
-    jinn._handle_jinn(command_args="veto", session_id="s1", task_id="t1")
-    _run_session()
+    # Veto is issued mid-session, once the task under capture has steps.
+    _start_session()
+    out = jinn._handle_jinn(command_args="veto", session_id="s1", task_id="t1")
+    assert "This task is vetoed" in out
+    jinn._on_session_end(session_id="s1", task_id="t1", completed=True, interrupted=False)
     writes = _write_calls(isolated_home)
     assert len(writes) == 1
     assert writes[0][1] == "publish"
     assert "--veto" in writes[0]
+
+
+def test_veto_with_no_active_task_reports_nothing_to_veto(isolated_home):
+    # mono issue #1383 — /jinn veto with nothing under capture must not
+    # return the success copy (it was an in-memory no-op).
+    consent.save_state(consent.ACCEPTED, previewed=True)
+    out = jinn._handle_jinn(command_args="veto", session_id="s1", task_id="t1")
+    assert out == (
+        "No active task to veto — veto marks the task currently running in this session."
+    )
+    assert not jinn._vetoed_tasks
 
 
 def test_publish_failure_retains_the_trace_locally(tmp_path, monkeypatch):
