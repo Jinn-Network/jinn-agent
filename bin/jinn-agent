@@ -11,7 +11,17 @@ fi
 # The agent must run in the directory the user invoked jinn-agent from
 # (mono#1369) — remember it before cd'ing into the repo for the setup steps.
 USER_PWD="$PWD"
-cd "$(dirname "$0")/.."
+# Resolve $0 through symlinks before deriving the repo root (mono#1377) —
+# setup.sh installs a ~/.local/bin/jinn-agent symlink, and dirname'ing the
+# symlink path would put the "repo root" in ~/.local. POSIX-portable
+# (no readlink -f), handles relative targets and chains.
+SELF=$0
+while [ -L "$SELF" ]; do
+  DIR=$(cd "$(dirname "$SELF")" && pwd)
+  TARGET=$(readlink "$SELF")
+  case $TARGET in /*) SELF=$TARGET ;; *) SELF="$DIR/$TARGET" ;; esac
+done
+cd "$(dirname "$SELF")/.."
 # Repo root for the ensure-block below (skin file lives in the repo).
 export JINN_AGENT_REPO="$PWD"
 # Prefer the repo-local venv the installer creates; fall back to system python.

@@ -190,11 +190,10 @@ def _real_venv_python() -> Path | None:
     return None
 
 
-@pytest.mark.skipif(_real_venv_python() is None, reason="no venv in this checkout")
-def test_entrypoint_preserves_user_cwd(tmp_path):
-    # Fake repo: real entrypoint text, stub hermes that prints its cwd,
-    # stub python delegating to the real venv python (pyyaml available),
-    # and the repo skin file so the ensure-block has work to do.
+def _make_fake_repo(tmp_path: Path) -> Path:
+    """Fake repo: real entrypoint text, stub hermes that prints its cwd,
+    stub python delegating to the real venv python (pyyaml available),
+    and the repo skin file so the ensure-block has work to do."""
     fake_repo = tmp_path / "fakerepo"
     (fake_repo / "bin").mkdir(parents=True)
     entry = fake_repo / "bin" / "jinn-agent"
@@ -215,6 +214,13 @@ def test_entrypoint_preserves_user_cwd(tmp_path):
     skin_dest = fake_repo / "plugins" / "jinn" / "skin" / "jinn.yaml"
     skin_dest.parent.mkdir(parents=True)
     skin_dest.write_text(SKIN_FILE.read_text(encoding="utf-8"), encoding="utf-8")
+    return fake_repo
+
+
+@pytest.mark.skipif(_real_venv_python() is None, reason="no venv in this checkout")
+def test_entrypoint_preserves_user_cwd(tmp_path):
+    fake_repo = _make_fake_repo(tmp_path)
+    entry = fake_repo / "bin" / "jinn-agent"
 
     invoke_dir = tmp_path / "workdir"
     invoke_dir.mkdir()
@@ -243,4 +249,64 @@ def test_entrypoint_preserves_user_cwd(tmp_path):
     assert (home / "skins" / "jinn.yaml").is_file(), (
         "skin not installed — the cwd fix broke the ensure-block's "
         "repo resolution"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Symlinked invocation (mono#1377) — setup.sh creates (and advertises) a
+# ~/.local/bin/jinn-agent symlink to bin/jinn-agent. The entrypoint derived
+# the repo root as `cd "$(dirname "$0")/.."`; through the symlink $0 is the
+# symlink path, so the "repo root" resolved to ~/.local — wrong venv lookup,
+# wrong JINN_AGENT_REPO, and the python fallback died with
+# ModuleNotFoundError: No module named 'hermes_cli'. The entrypoint must
+# resolve $0 through symlinks (including relative targets) before deriving
+# the repo root, while still running the agent in the invoking directory.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(_real_venv_python() is None, reason="no venv in this checkout")
+@pytest.mark.parametrize("target_style", ["absolute", "relative"])
+def test_entrypoint_resolves_symlinked_invocation(tmp_path, target_style):
+    fake_repo = _make_fake_repo(tmp_path)
+    entry = fake_repo / "bin" / "jinn-agent"
+
+    # Symlink in a separate bin dir, like setup.sh's ~/.local/bin link.
+    link_bin = tmp_path / "linkbin"
+    link_bin.mkdir()
+    link = link_bin / "jinn-agent"
+    if target_style == "absolute":
+        link.symlink_to(entry)
+    else:
+        link.symlink_to(os.path.relpath(entry, link_bin))
+
+    invoke_dir = tmp_path / "workdir"
+    invoke_dir.mkdir()
+    home = tmp_path / "home"
+
+    env = dict(os.environ)
+    env["JINN_AGENT_HOME"] = str(home)
+    env.pop("HERMES_HOME", None)
+    env.pop("JINN_AGENT_REPO", None)
+    result = subprocess.run(
+        [str(link)],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env=env,
+        cwd=str(invoke_dir),
+    )
+    assert result.returncode == 0, (
+        "symlinked invocation failed — the entrypoint did not resolve $0 "
+        f"through the symlink before deriving the repo root\n{result.stderr[-2000:]}"
+    )
+
+    printed = result.stdout.strip()
+    assert Path(printed).resolve() == invoke_dir.resolve(), (
+        "the agent must run in the directory jinn-agent was invoked from, "
+        f"not the repo clone — got {printed!r}"
+    )
+    # The ensure-block found the real repo, not the symlink's parent.
+    assert (home / "skins" / "jinn.yaml").is_file(), (
+        "skin not installed — JINN_AGENT_REPO did not resolve to the repo "
+        "through the symlink"
     )
