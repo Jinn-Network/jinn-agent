@@ -143,15 +143,60 @@ def test_welcome_line_from_skin(jinn_skin_active):
     assert not BRAND_WORDS.search(welcome)
 
 
-def test_tips_have_no_upstream_branding():
-    from hermes_cli.tips import TIPS
+def test_jinn_tips_list_has_no_upstream_branding():
+    """THE pin for the acceptance criterion: deterministic full-list check."""
+    from hermes_cli.tips import _JINN_TIPS
 
-    claw = [t for t in TIPS if re.search(r"claw", t, re.IGNORECASE)]
-    assert not claw, f"OpenClaw-era tips survive the fork filter: {claw}"
+    branded = [t for t in _JINN_TIPS if BRAND_WORDS.search(t)]
+    assert not branded, f"upstream brand words in _JINN_TIPS: {branded}"
 
-    hermes = [t for t in TIPS if re.search(r"\bHermes\b", t)]
-    assert not hermes, f"capital-H Hermes branding in tips: {hermes[:3]}"
-
-    assert any("jinn-agent" in t for t in TIPS), (
+    assert any("jinn-agent" in t for t in _JINN_TIPS), (
         "brand substitution produced no jinn-agent tips"
     )
+
+
+def test_random_tips_clean_under_jinn_skin(jinn_skin_active):
+    import random
+
+    from hermes_cli.tips import get_random_tip
+
+    random.seed(1358)  # deterministic draws
+    draws = [get_random_tip() for _ in range(200)]
+
+    branded = [t for t in draws if BRAND_WORDS.search(t)]
+    assert not branded, f"upstream brand words drawn under jinn skin: {branded}"
+
+    assert any("jinn-agent" in t for t in draws), (
+        "200 draws under the jinn skin produced no jinn-agent tip"
+    )
+
+
+def test_default_skin_gets_untouched_upstream_tips():
+    """An explicit `display.skin: default` must not mix jinn tips with the
+    upstream Hermes banner — upstream TIPS stays unfiltered and draws come
+    from it unchanged."""
+    import random
+
+    from hermes_cli.skin_engine import set_active_skin
+    from hermes_cli.tips import _JINN_TIPS, TIPS, get_random_tip
+
+    # Upstream list is unmodified at import time: the OpenClaw-era tips and
+    # Nous tips are still present, and it is strictly larger than the
+    # filtered fork list.
+    assert any(re.search(r"claw", t, re.IGNORECASE) for t in TIPS), (
+        "upstream TIPS was mutated: OpenClaw tips are gone"
+    )
+    assert any(re.search(r"Nous", t) for t in TIPS), (
+        "upstream TIPS was mutated: Nous tips are gone"
+    )
+    assert len(TIPS) > len(_JINN_TIPS)
+
+    set_active_skin("default")
+    try:
+        random.seed(1358)
+        draws = [get_random_tip() for _ in range(200)]
+        assert all(t in TIPS for t in draws), (
+            "default skin drew a tip not in the upstream corpus"
+        )
+    finally:
+        set_active_skin("default")

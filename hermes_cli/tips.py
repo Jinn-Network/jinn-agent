@@ -474,15 +474,6 @@ TIPS = [
     'Dashboard plugins are served from /dashboard-plugins/<name>/ — drop files into ~/.hermes/dashboard-plugins/.',
 ]
 
-# --- jinn-agent fork tail (mono#1358): brand filter. Upstream list above is
-# --- untouched; merge conflicts resolve as upstream-list + this tail.
-# Drops OpenClaw-era tips (not applicable to this fork) and rebrands
-# capital-H "Hermes" to "jinn-agent". Lowercase `hermes <subcmd>` command
-# strings survive intentionally — they are functional, not branding.
-import re as _re
-TIPS[:] = [_re.sub(r"\bHermes\b", "jinn-agent", _tip) for _tip in TIPS if not _re.search(r"claw", _tip, _re.IGNORECASE)]
-
-
 def get_random_tip(exclude_recent: int = 0) -> str:
     """Return a random tip string.
 
@@ -491,3 +482,41 @@ def get_random_tip(exclude_recent: int = 0) -> str:
             deduplication across sessions.
     """
     return random.choice(TIPS)
+
+
+# --- jinn-agent fork tail (mono#1358): skin-gated brand filter. Upstream
+# --- TIPS list and get_random_tip above are untouched; merge conflicts
+# --- resolve as upstream code + this tail.
+# _JINN_TIPS drops OpenClaw-era tips and Nous tips (they advertise
+# upstream-specific services and cannot be honestly rebranded) and rebrands
+# capital-H "Hermes" to "jinn-agent". Lowercase `hermes <subcmd>` command
+# strings survive intentionally — they are functional, not branding.
+# get_random_tip is wrapped: draws come from _JINN_TIPS only when the
+# active skin is `jinn`; any other skin (including an explicit
+# `display.skin: default`) gets upstream behaviour unchanged, so branding
+# stays consistent with the banner.
+import re as _re
+
+_JINN_TIPS = [
+    _re.sub(r"\bHermes\b", "jinn-agent", _tip)
+    for _tip in TIPS
+    if not _re.search(r"claw", _tip, _re.IGNORECASE)
+    and not _re.search(r"Nous", _tip)
+]
+
+_upstream_get_random_tip = get_random_tip
+
+
+def get_random_tip(exclude_recent: int = 0) -> str:  # noqa: F811
+    """Skin-gated wrapper: the jinn skin draws from the brand-filtered list.
+
+    Falls back to upstream behaviour on any error (e.g. skin engine not
+    importable) and for every non-jinn skin.
+    """
+    try:
+        from hermes_cli.skin_engine import get_active_skin
+        if get_active_skin().name == "jinn":
+            return random.choice(_JINN_TIPS)
+    except Exception:
+        pass
+    return _upstream_get_random_tip(exclude_recent)
