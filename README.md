@@ -16,12 +16,14 @@ before anything is ever sent, and you can veto any task.
 git clone https://github.com/Jinn-Network/jinn-agent
 cd jinn-agent
 ./setup.sh          # one-time: deps, sandboxing, agent core (repo-local venv)
+bin/jinn-agent setup   # pick a model provider (one-time)
 bin/jinn-agent      # start
 ```
 
 Provider auth: put your model key in `~/.jinn-agent/.env` (e.g.
-`OPENROUTER_API_KEY=…`) or follow the agent's own login prompts on first
-run. jinn-agent keeps all its state under `~/.jinn-agent/`.
+`OPENROUTER_API_KEY=…`) and select a model with `bin/jinn-agent setup` —
+without a configured model the first message fails. jinn-agent keeps all
+its state under `~/.jinn-agent/`.
 
 ## Reading from the network (works immediately)
 
