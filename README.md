@@ -76,7 +76,11 @@ Contributing needs two things reading doesn't:
 
 No conflict: jinn-agent keeps its own state home (`~/.jinn-agent`), installs
 into a repo-local venv, and never touches `~/.hermes` or an existing global
-install. Details and the deliberate-sharing override are in
+install. The isolation is carried by the `jinn-agent` entrypoint, which sets
+the state home for everything it spawns — invoking the underlying upstream
+`hermes` binary directly (or from an integration that does not pass that
+environment through) bypasses it and falls back to the upstream default
+(`~/.hermes`). Details and the deliberate-sharing override are in
 [JINN.md](JINN.md).
 
 ## What this repo is

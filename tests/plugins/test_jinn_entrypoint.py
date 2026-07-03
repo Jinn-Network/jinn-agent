@@ -18,6 +18,7 @@ Mono issue: Jinn-Network/mono#1361.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -154,6 +155,89 @@ def test_entrypoint_respects_explicit_skin_choice(tmp_path, monkeypatch):
     # Skin still installed (available via /skin jinn) and the flag still set.
     assert (tmp_path / "skins" / "jinn.yaml").is_file()
     assert cfg["onboarding"]["seen"]["openclaw_residue_cleanup"] is True
+
+
+# ---------------------------------------------------------------------------
+# Identity + home isolation (mono#1386) — first run must NOT seed the agent
+# home's SOUL.md with the upstream brand identity ("You are Hermes Agent,
+# ... created by Nous Research." is the live identity prompt), and must not
+# create a stray ~/.hermes skeleton in the user's HOME. The ensure-block
+# installs the fork-owned template plugins/jinn/soul/SOUL.md ONLY when
+# SOUL.md is absent — a user's existing soul is never overwritten (unlike
+# the skin sync, where the repo copy is canonical).
+# ---------------------------------------------------------------------------
+
+SOUL_TEMPLATE = REPO_ROOT / "plugins" / "jinn" / "soul" / "SOUL.md"
+JINN_IDENTITY_LINE = "You are jinn-agent, an open coding harness on the Jinn network."
+_BRAND_WORDS = re.compile(r"(?i)\b(hermes|nous|openclaw)\b")
+
+
+def test_soul_template_carries_jinn_identity_and_no_brand_words():
+    text = SOUL_TEMPLATE.read_text(encoding="utf-8")
+    assert text.startswith(JINN_IDENTITY_LINE)
+    assert _BRAND_WORDS.search(text) is None, "upstream brand words in the fork soul"
+
+
+def test_ensure_block_seeds_jinn_soul_when_absent(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    monkeypatch.setenv("JINN_AGENT_REPO", str(REPO_ROOT))
+    _run_ensure(tmp_path)
+    soul = tmp_path / "SOUL.md"
+    assert soul.is_file(), "ensure-block did not seed SOUL.md into a fresh home"
+    assert soul.read_text(encoding="utf-8") == SOUL_TEMPLATE.read_text(encoding="utf-8")
+
+
+def test_ensure_block_never_overwrites_an_existing_soul(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    monkeypatch.setenv("JINN_AGENT_REPO", str(REPO_ROOT))
+    (tmp_path / "SOUL.md").write_text("You are my custom persona.", encoding="utf-8")
+    _run_ensure(tmp_path)
+    assert (tmp_path / "SOUL.md").read_text(encoding="utf-8") == "You are my custom persona."
+
+
+def test_core_first_run_seeding_respects_the_jinn_soul(tmp_path):
+    """The ensure-block runs BEFORE the core; the core's own first-run
+    seeding (_ensure_default_soul_md) must leave the jinn soul in place."""
+    sys.path.insert(0, str(REPO_ROOT))
+    try:
+        from hermes_cli.config import _ensure_default_soul_md
+    finally:
+        sys.path.remove(str(REPO_ROOT))
+    (tmp_path / "SOUL.md").write_text(
+        SOUL_TEMPLATE.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    _ensure_default_soul_md(tmp_path)
+    text = (tmp_path / "SOUL.md").read_text(encoding="utf-8")
+    assert text.startswith(JINN_IDENTITY_LINE), "core seeding overwrote the jinn soul"
+
+
+@pytest.mark.skipif(_console_script() is None, reason="no venv in this checkout")
+def test_first_launch_isolates_home_and_seeds_jinn_identity(tmp_path):
+    """First launch against a fresh fake HOME: no stray $HOME/.hermes, and
+    the agent home's SOUL.md is the jinn identity, brand-word free."""
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    agent_home = tmp_path / "agent-home"
+    env = dict(os.environ)
+    env["HOME"] = str(fake_home)
+    env["JINN_AGENT_HOME"] = str(agent_home)
+    env.pop("HERMES_HOME", None)
+    result = subprocess.run(
+        [str(ENTRYPOINT), "--help"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env=env,
+    )
+    assert result.returncode == 0, result.stderr[-2000:]
+    assert not (fake_home / ".hermes").exists(), (
+        "first launch created a stray ~/.hermes in the user's HOME"
+    )
+    soul = agent_home / "SOUL.md"
+    assert soul.is_file(), "first launch did not seed SOUL.md in the agent home"
+    text = soul.read_text(encoding="utf-8")
+    assert text.startswith(JINN_IDENTITY_LINE)
+    assert _BRAND_WORDS.search(text) is None
 
 
 def test_entrypoint_exports_repo_and_keeps_single_heredoc():

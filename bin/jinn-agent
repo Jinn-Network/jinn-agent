@@ -62,6 +62,23 @@ if src.is_file():
     except Exception:
         pass
 
+# Fork soul — identity template (mono#1386). Without it, the upstream core's
+# first-run seeding writes its own brand identity ("You are Hermes Agent, ...
+# created by Nous Research.") as the live identity prompt. Installed ONLY
+# when SOUL.md is absent — unlike the skin sync above (repo copy canonical,
+# always re-synced), the soul is the user's editable identity file, so an
+# existing SOUL.md is NEVER overwritten, whether user-written or seeded by
+# an earlier run. This block runs before the core, so on a fresh home this
+# template wins; the core's seeding leaves an existing non-template SOUL.md
+# untouched (hermes_cli/config.py _ensure_default_soul_md).
+soul_src = Path(os.environ.get("JINN_AGENT_REPO", ".")) / "plugins" / "jinn" / "soul" / "SOUL.md"
+soul_dest = home / "SOUL.md"
+if soul_src.is_file() and not soul_dest.exists():
+    try:
+        soul_dest.write_text(soul_src.read_text(encoding="utf-8"), encoding="utf-8")
+    except Exception:
+        pass
+
 path = home / "config.yaml"
 config = {}
 if path.exists():
