@@ -305,3 +305,14 @@ def test_slash_consent_never_calls_blocking_input(isolated_home, monkeypatch):
     for args in ("consent", "consent accept", "consent accept confirm",
                  "consent decline", "consent decline confirm"):
         jinn._handle_jinn(command_args=args)
+
+
+def test_jinn_layer_not_found_points_at_canary_tag():
+    """mono#1382: bare `npm install -g @jinn-network/client` installs latest,
+    which has no jinn-layer bin until stable >= 0.1.10 — the error must name
+    the canary tag."""
+    jinn_layer = importlib.import_module("plugins.jinn.jinn_layer")
+    code, out = jinn_layer._default_runner(["definitely-not-a-real-binary-xyz"])
+    assert code == 127
+    assert "@jinn-network/client@canary" in out
+    assert "JINN_LAYER_BIN" in out

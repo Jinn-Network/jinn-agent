@@ -34,9 +34,13 @@ def _default_runner(argv: List[str]) -> Tuple[int, str]:
         out = proc.stdout + (("\n" + proc.stderr) if proc.stderr.strip() else "")
         return proc.returncode, out.strip()
     except FileNotFoundError:
+        # The jinn-layer bin ships on the canary tag until the next stable
+        # release (>= 0.1.10) carries it — flip @canary back to bare
+        # @jinn-network/client here and in README.md once that stable ships
+        # (see Jinn-Network/mono#1368).
         return 127, (
             f"{argv[0]}: not found. Install the Jinn layer "
-            "(npm install -g @jinn-network/client) or set JINN_LAYER_BIN."
+            "(npm install -g @jinn-network/client@canary) or set JINN_LAYER_BIN."
         )
     except subprocess.TimeoutExpired:
         return 124, f"{argv[0]}: timed out after {_TIMEOUT_S}s"
