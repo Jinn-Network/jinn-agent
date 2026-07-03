@@ -39,6 +39,21 @@ layer becomes the plugin for other harnesses, and upstream merges stay cheap.
   `publish failed — retained locally`.
 - `/jinn ledger` — what left this machine, with anchor links.
 - `/corpus <query>` — in-session corpus search.
+- **Payload-agnostic auto-pickup** — at task start the harness derives the
+  task's distribution, looks up the corpus, and decides per candidate by
+  **verification tier, not human keystroke**: payloads at or above the
+  configured threshold (default `evaluator-verified`) are adopted
+  automatically — verification under bond is the trust gate; anything below
+  is surfaced to the agent as injected context, install stays deliberate.
+  Adopters are a registry keyed by payload type (`skill` ships in v0;
+  loadout recommendations and full loadouts plug in as new adopters — same
+  rail, richer payloads). Config: `$HERMES_HOME/jinn/pickup.json`
+  (`enabled`, `autoAdoptTier`, `maxCandidates`). Fails open; never
+  consent-gated (consuming is always allowed). Today's corpus holds nothing
+  verified, so today this runs suggest-only — honestly.
+- **Agent tools `corpus_search` / `corpus_fetch`** — the agent itself can
+  search the corpus by content and read a record's full text mid-task
+  (hash-verified), with or without installing anything.
 - **`/jinn skills install <ref>`** — install a corpus-published skill into
   Hermes's native skills: `corpus get` → sha256 verification → SKILL.md
   written to `$HERMES_HOME/skills/<slug>/`; Hermes's loader takes over.

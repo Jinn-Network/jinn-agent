@@ -68,6 +68,12 @@ def _run_session(session_id: str = "s1", task_id: str = "t1", completed: bool = 
     )
 
 
+def _write_calls(spy: RunnerSpy) -> list[list[str]]:
+    """Contribution-side calls only (publish/capture). Pickup's read-only
+    corpus calls are allowed regardless of consent — consuming is ungated."""
+    return [c for c in spy.calls if len(c) > 1 and c[1] in ("publish", "capture")]
+
+
 def _pending_files(tmp_home: Path) -> list[Path]:
     d = tmp_home / "jinn" / "pending"
     return sorted(d.glob("*.json")) if d.exists() else []
@@ -77,22 +83,22 @@ def _pending_files(tmp_home: Path) -> list[Path]:
 
 def test_unset_consent_captures_nothing(isolated_home, tmp_path):
     _run_session()
-    assert isolated_home.calls == []
+    assert _write_calls(isolated_home) == []
     assert _pending_files(tmp_path) == []
 
 
 def test_declined_consent_captures_nothing(isolated_home, tmp_path):
     consent.save_state(consent.DECLINED)
     _run_session()
-    assert isolated_home.calls == []
+    assert _write_calls(isolated_home) == []
     assert _pending_files(tmp_path) == []
 
 
 def test_accepted_but_unpreviewed_holds_locally(isolated_home, tmp_path):
     consent.save_state(consent.ACCEPTED)
     _run_session()
-    # Held for the preview-first rule: a pending file exists, nothing ran.
-    assert isolated_home.calls == []
+    # Held for the preview-first rule: a pending file exists, nothing published.
+    assert _write_calls(isolated_home) == []
     files = _pending_files(tmp_path)
     assert len(files) == 1
     task = json.loads(files[0].read_text())
@@ -106,8 +112,9 @@ def test_accepted_but_unpreviewed_holds_locally(isolated_home, tmp_path):
 def test_accepted_and_previewed_publishes(isolated_home, tmp_path):
     consent.save_state(consent.ACCEPTED, previewed=True)
     _run_session()
-    assert len(isolated_home.calls) == 1
-    argv = isolated_home.calls[0]
+    writes = _write_calls(isolated_home)
+    assert len(writes) == 1
+    argv = writes[0]
     assert argv[1] == "publish"
     assert "--veto" not in argv
     # Published pending file is cleaned up.
@@ -118,9 +125,10 @@ def test_veto_records_locally_and_never_publishes_content(isolated_home, tmp_pat
     consent.save_state(consent.ACCEPTED, previewed=True)
     jinn._handle_jinn(command_args="veto", session_id="s1", task_id="t1")
     _run_session()
-    assert len(isolated_home.calls) == 1
-    assert isolated_home.calls[0][1] == "publish"
-    assert "--veto" in isolated_home.calls[0]
+    writes = _write_calls(isolated_home)
+    assert len(writes) == 1
+    assert writes[0][1] == "publish"
+    assert "--veto" in writes[0]
 
 
 def test_publish_failure_retains_the_trace_locally(tmp_path, monkeypatch):
@@ -133,7 +141,7 @@ def test_publish_failure_retains_the_trace_locally(tmp_path, monkeypatch):
         _run_session()
     finally:
         jinn._runner = None
-    assert len(failing.calls) == 1
+    assert len(_write_calls(failing)) == 1
     assert len(_pending_files(tmp_path)) == 1  # retained locally
 
 
@@ -195,7 +203,7 @@ def test_preview_marks_previewed_and_unlocks_publish(isolated_home, tmp_path):
     assert "preview recorded" in out
     assert consent.load_state()["previewed"] is True
     # Preview invoked jinn-layer capture preview on the pending file.
-    assert isolated_home.calls[0][1:3] == ["capture", "preview"]
+    assert any(c[1:3] == ["capture", "preview"] for c in isolated_home.calls)
 
 
 def test_corpus_command_delegates_to_layer(isolated_home):

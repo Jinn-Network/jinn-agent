@@ -21,6 +21,7 @@ Upstream-merge procedure: see JINN.md at the repo root.
 
 from __future__ import annotations
 
+import json
 import logging
 import shlex
 import threading
@@ -30,6 +31,7 @@ from typing import Any, Dict, Optional, Set
 from . import capture_buffer as buf
 from . import consent
 from . import jinn_layer
+from . import pickup
 from . import skills_install
 
 logger = logging.getLogger(__name__)
@@ -75,11 +77,16 @@ def _on_pre_llm_call(
     platform: str = "",
     task_id: str = "",
     **_: Any,
-) -> None:
-    if not consent.capture_enabled():
-        return
-    if is_first_turn:
+) -> Optional[Dict[str, str]]:
+    # Contribution side — consent-gated.
+    if consent.capture_enabled() and is_first_turn:
         buf.record_first_turn(task_id, session_id, user_message, model, platform)
+    # Consumption side — NEVER consent-gated: payload-agnostic corpus pickup.
+    # Returns {"context": ...} (injected into the user message, cache-safe)
+    # or None. Fails open inside pickup().
+    if is_first_turn:
+        return pickup.pickup(user_message, runner=_runner)
+    return None
 
 
 def _on_post_tool_call(
@@ -242,9 +249,96 @@ def _handle_corpus(command_args: str = "", **_: Any) -> str:
     return out if code == 0 else f"corpus search failed:\n{out}"
 
 
+# ── Agent tools — in-session corpus consumption ──────────────────────────────
+
+_CORPUS_SEARCH_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "query": {"type": "string", "description": "Substring to search for (matches distribution tags and task summaries, e.g. 'tdd')."},
+        "limit": {"type": "integer", "description": "Max results (default 5)."},
+    },
+    "required": ["query"],
+}
+
+_CORPUS_FETCH_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "ref": {"type": "string", "description": "Corpus record ref (from corpus_search results)."},
+    },
+    "required": ["ref"],
+}
+
+
+def _tool_corpus_search(args: Dict[str, Any], **_kw: Any) -> str:
+    query = str(args.get("query") or "").strip()
+    if not query:
+        return "corpus_search requires a query."
+    limit = int(args.get("limit") or 5)
+    code, out = jinn_layer.run(["corpus", "search", query, "--json", "--limit", str(limit)], _runner)
+    if code != 0:
+        return f"corpus search unavailable: {out}"
+    try:
+        hits = json.loads(out)
+    except json.JSONDecodeError:
+        return "corpus search returned an unreadable response."
+    if not isinstance(hits, list) or not hits:
+        return f"No corpus records matched {query!r}."
+    lines = []
+    for hit in hits[:limit]:
+        if not isinstance(hit, dict):
+            continue
+        tags = ",".join(hit.get("tags") or []) or "-"
+        summary = str(hit.get("summary") or hit.get("title") or "")[:100]
+        lines.append(f"ref={hit.get('ref')} tags=[{tags}] {summary}")
+    lines.append("Use corpus_fetch with a ref to read the full content.")
+    return "\n".join(lines)
+
+
+def _tool_corpus_fetch(args: Dict[str, Any], **_kw: Any) -> str:
+    ref = str(args.get("ref") or "").strip()
+    if not ref:
+        return "corpus_fetch requires a ref."
+    code, out = jinn_layer.run(["corpus", "get", ref, "--json"], _runner)
+    if code != 0:
+        return f"corpus get unavailable: {out}"
+    try:
+        record = json.loads(out)
+        trace, _sha = skills_install._extract_trace(record)
+    except Exception as exc:
+        return f"record is not readable as a trace envelope: {exc}"
+    tier = str(((trace.get("outcome") or {}).get("verifiabilityTier")) or "unknown")
+    summary = str(((trace.get("task") or {}).get("summary")) or "")
+    steps = trace.get("steps") or []
+    skill_md = None
+    for step in steps:
+        attrs = step.get("attributes") if isinstance(step, dict) else None
+        if isinstance(attrs, dict) and isinstance(attrs.get("skill.md"), str):
+            skill_md = attrs["skill.md"]
+            break
+    header = f"[{tier}] {summary}"
+    if skill_md is not None:
+        body = skill_md[:8000]
+        return f"{header}\n\n{body}"
+    return f"{header}\n\n(trace envelope with {len(steps)} steps; no skill.md payload)"
+
+
 # ── Registration ─────────────────────────────────────────────────────────────
 
 def register(ctx) -> None:
+    ctx.register_tool(
+        name="corpus_search",
+        toolset="jinn",
+        schema=_CORPUS_SEARCH_SCHEMA,
+        handler=_tool_corpus_search,
+        description="Search the public Jinn corpus by content (distribution tags + task summaries). Use when the task type looks like something the network may already have knowledge about.",
+    )
+    ctx.register_tool(
+        name="corpus_fetch",
+        toolset="jinn",
+        schema=_CORPUS_FETCH_SCHEMA,
+        handler=_tool_corpus_fetch,
+        description="Fetch a corpus record by ref (hash-verified) and read its content in-session — e.g. a published skill's full text.",
+    )
     ctx.register_hook("on_session_start", _on_session_start)
     ctx.register_hook("pre_llm_call", _on_pre_llm_call)
     ctx.register_hook("post_tool_call", _on_post_tool_call)
