@@ -68,7 +68,8 @@ CONFIRM_DECLINE = (
 )
 RECORDED_ON = (
     "Contribution is ON. Scrubbed task traces will publish to the public "
-    "corpus. Nothing publishes until after you preview once."
+    "corpus. Next: run /jinn preview after your first task to see exactly "
+    "what would publish. Nothing publishes until you do."
 )
 RECORDED_OFF = (
     "Contribution is OFF — reader only. No trace leaves this machine. "
@@ -84,6 +85,14 @@ NODE_STUB_LATER = (
 )
 
 KEYS_LINE = "[A] Accept · [D] Decline · [P] Preview a scrubbed envelope · [?] Docs"
+
+# Current-state line shown above the pitch, so /jinn consent always tells the
+# operator where they stand before re-pitching (mono#1384).
+STATE_LINES = {
+    UNSET: "Contribution is currently OFF (never asked).",
+    ACCEPTED: "Contribution is currently ON.",
+    DECLINED: "Contribution is currently OFF (declined).",
+}
 
 # The slash-command surface (TUI-safe: no blocking reads — see run_consent_flow's
 # docstring). Same deliberate two-step as the keyboard flow.
@@ -141,8 +150,12 @@ def capture_enabled() -> bool:
 
 # ── The flow ─────────────────────────────────────────────────────────────────
 
+def state_line() -> str:
+    return STATE_LINES[str(load_state().get("status", UNSET))]
+
+
 def render_explainer(keys_line: str = KEYS_LINE) -> str:
-    lines = [OPENING, ""]
+    lines = [state_line(), "", OPENING, ""]
     lines += [f"  {s}" for s in WHY]
     lines.append("")
     lines.append("What leaves this machine:")
@@ -164,7 +177,7 @@ def confirm_decline_command() -> str:
 
 def record_accept() -> str:
     save_state(ACCEPTED)
-    return RECORDED_ON + "\n\n" + NODE_STUB_LATER
+    return RECORDED_ON
 
 
 def record_decline() -> str:
