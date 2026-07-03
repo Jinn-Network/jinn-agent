@@ -34,6 +34,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 STUB_INSTALLER = """#!/bin/sh
 # Stub of the upstream installer: the side effects under test.
+echo "STUB-INSTALLER-RUNNING"
 echo "$HERMES_HOME" > "$(dirname "$0")/recorded-home"
 mkdir -p "$(dirname "$0")/venv/bin"
 printf '#!/bin/sh\\n' > "$(dirname "$0")/venv/bin/hermes"
@@ -266,7 +267,134 @@ def test_next_steps_name_only_fork_commands(sandbox):
     result = _run(home, repo)
     assert result.returncode == 0, result.stderr
     assert "jinn-agent" in result.stdout
-    # The wrapper's own closing block must not tell the user to run the
-    # upstream command. (The stub prints nothing, so any 'hermes setup' /
-    # bare 'hermes' instruction here would come from the wrapper.)
-    assert "hermes setup" not in result.stdout
+    # The wrapper's CLOSING block must not tell the user to run the upstream
+    # command. Scoped to the output after "jinn-agent is installed." because
+    # the pre-installer header (mono#1387) legitimately NAMES `hermes setup`
+    # as an upstream command to ignore — naming is not instructing.
+    closing = result.stdout.split("jinn-agent is installed.", 1)[1]
+    assert "hermes setup" not in closing
+
+
+# --- setup bookends (mono#1387) --------------------------------------------
+# The upstream installer's output brands itself 'Hermes' and leaves
+# Hermes-branded artifacts in the user's shell rc files. setup.sh must
+# bookend it: a pre-installer header that frames the upstream output, and
+# post-installer repairs (rc comment rebrand, fresh-bash PATH hole).
+
+UPSTREAM_RC_COMMENT = "# Hermes Agent — ensure ~/.local/bin is on PATH"
+JINN_RC_COMMENT = "# jinn-agent — ensure ~/.local/bin is on PATH"
+PATH_EXPORT_LINE = 'export PATH="$HOME/.local/bin:$PATH"'
+
+# Installer variant that also appends the upstream PATH block to an existing
+# ~/.zshrc — mimicking upstream setup-hermes.sh's shell-config step.
+STUB_INSTALLER_WRITES_RC = STUB_INSTALLER + """
+if [ -f "$HOME/.zshrc" ]; then
+  echo "" >> "$HOME/.zshrc"
+  echo "# Hermes Agent — ensure ~/.local/bin is on PATH" >> "$HOME/.zshrc"
+  echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.zshrc"
+fi
+"""
+
+
+def test_header_frames_the_installer_output(sandbox):
+    """The pre-installer header must print BEFORE the upstream installer's
+    own (Hermes-branded) output, and must say the upstream branding/commands
+    are remapped by this fork."""
+    home, repo = sandbox
+    result = _run(home, repo)
+    assert result.returncode == 0, result.stderr
+    out = result.stdout
+    assert "STUB-INSTALLER-RUNNING" in out
+    header_idx = out.find("upstream")
+    assert header_idx != -1, "no pre-installer header in setup output"
+    assert header_idx < out.find("STUB-INSTALLER-RUNNING"), (
+        "the header must print before the installer runs"
+    )
+    header = out[: out.find("STUB-INSTALLER-RUNNING")]
+    assert "Hermes" in header, "header must name the upstream branding"
+    assert "jinn-agent" in header
+    assert ".jinn-agent" in header, "header must name the remapped home"
+
+
+def test_upstream_rc_comment_is_rebranded(sandbox):
+    """The installer appends a '# Hermes Agent — …' PATH comment to the
+    user's rc file; post-setup that comment must name jinn-agent."""
+    home, repo = sandbox
+    (repo / "setup-hermes.sh").write_text(
+        STUB_INSTALLER_WRITES_RC, encoding="utf-8"
+    )
+    zshrc = home / ".zshrc"
+    zshrc.write_text("# my dotfiles\n", encoding="utf-8")
+    result = _run(home, repo, SHELL="/bin/zsh")
+    assert result.returncode == 0, result.stderr
+    content = zshrc.read_text(encoding="utf-8")
+    assert UPSTREAM_RC_COMMENT not in content, (
+        "upstream-branded rc comment survived setup"
+    )
+    assert JINN_RC_COMMENT in content
+    assert PATH_EXPORT_LINE in content
+    assert "# my dotfiles" in content, "pre-existing rc content was lost"
+
+
+def test_fresh_bash_machine_gets_a_path_block(sandbox):
+    """Upstream leaves a fresh bash machine with no PATH line at all. The
+    wrapper must create/append the rc file matching $SHELL."""
+    home, repo = sandbox
+    result = _run(home, repo, SHELL="/bin/bash")
+    assert result.returncode == 0, result.stderr
+    bashrc = home / ".bashrc"
+    assert bashrc.is_file(), "no .bashrc created on a fresh bash machine"
+    content = bashrc.read_text(encoding="utf-8")
+    assert JINN_RC_COMMENT in content
+    assert PATH_EXPORT_LINE in content
+    # The closing next steps must name the ACTUAL rc file, not ~/.zshrc.
+    assert "~/.bashrc" in result.stdout
+    assert "~/.zshrc" not in result.stdout
+
+
+def test_fresh_unknown_shell_falls_back_to_profile(sandbox):
+    home, repo = sandbox
+    result = _run(home, repo, SHELL="/bin/dash")
+    assert result.returncode == 0, result.stderr
+    profile = home / ".profile"
+    assert profile.is_file()
+    content = profile.read_text(encoding="utf-8")
+    assert JINN_RC_COMMENT in content
+    assert PATH_EXPORT_LINE in content
+    assert "~/.profile" in result.stdout
+
+
+def test_rc_repairs_are_idempotent(sandbox):
+    """A second setup run must not duplicate the PATH block or regress the
+    rebranded comment."""
+    home, repo = sandbox
+    (repo / "setup-hermes.sh").write_text(
+        STUB_INSTALLER_WRITES_RC, encoding="utf-8"
+    )
+    zshrc = home / ".zshrc"
+    zshrc.write_text("", encoding="utf-8")
+    first = _run(home, repo, SHELL="/bin/zsh")
+    assert first.returncode == 0, first.stderr
+    after_first = zshrc.read_text(encoding="utf-8")
+    second = _run(home, repo, SHELL="/bin/zsh")
+    assert second.returncode == 0, second.stderr
+    after_second = zshrc.read_text(encoding="utf-8")
+    # The stub unconditionally re-appends the upstream block when .zshrc
+    # exists; the wrapper re-rebrands it, so the comment count may grow only
+    # by what the stub added — the wrapper itself must add nothing new.
+    assert after_second.count(JINN_RC_COMMENT) >= 1
+    assert UPSTREAM_RC_COMMENT not in after_second
+    # Wrapper-side append is guarded: a file already containing the PATH
+    # line never gets a second wrapper-written block.
+    assert after_first.count(PATH_EXPORT_LINE) == 1
+
+
+def test_fresh_bash_path_block_is_not_duplicated_on_rerun(sandbox):
+    home, repo = sandbox
+    first = _run(home, repo, SHELL="/bin/bash")
+    assert first.returncode == 0, first.stderr
+    second = _run(home, repo, SHELL="/bin/bash")
+    assert second.returncode == 0, second.stderr
+    content = (home / ".bashrc").read_text(encoding="utf-8")
+    assert content.count(JINN_RC_COMMENT) == 1
+    assert content.count(PATH_EXPORT_LINE) == 1

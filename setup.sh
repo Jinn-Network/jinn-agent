@@ -34,6 +34,21 @@ restore_hermes_link() {
 }
 trap restore_hermes_link EXIT
 
+# Pre-installer header (mono#1387): the upstream installer's output brands
+# itself 'Hermes' and names upstream commands/paths. Frame it before it
+# scrolls past so the user knows what applies to this fork.
+echo "============================================================"
+echo " jinn-agent setup"
+echo ""
+echo " The upstream agent-core installer runs next. Its output"
+echo " brands itself 'Hermes' and may name commands (hermes,"
+echo " hermes setup, ...) and paths (~/.hermes) that this fork"
+echo " remaps to jinn-agent and ~/.jinn-agent."
+echo ""
+echo " Only the jinn-agent next steps at the very end apply."
+echo "============================================================"
+echo ""
+
 # The installer's LAST step is an interactive "run the wizard now?" read,
 # which fails (exit 1) without a TTY — after the install itself is done.
 # Judge success by the artifact the install exists to produce, not by
@@ -78,12 +93,56 @@ fi
 mkdir -p "$LINK_DIR"
 ln -sf "$REPO_DIR/bin/jinn-agent" "$LINK_DIR/jinn-agent"
 
+# Post-installer rc repairs (mono#1387).
+#
+# 1. The installer appends a PATH block commented '# Hermes Agent — …' to
+#    the user's shell rc file. Rebrand JUST that comment line — the block
+#    was written on this fork's behalf. Rewrite via temp file + cat-back so
+#    symlinked rc files (dotfiles repos) keep their inode; idempotent (the
+#    pattern is gone after the first rewrite).
+UPSTREAM_RC_COMMENT='# Hermes Agent — ensure ~/.local/bin is on PATH'
+JINN_RC_COMMENT='# jinn-agent — ensure ~/.local/bin is on PATH'
+for RC in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile"; do
+  if [ -f "$RC" ] && grep -Fq "$UPSTREAM_RC_COMMENT" "$RC"; then
+    RC_TMP="$RC.jinn-setup.tmp.$$"
+    sed "s|^$UPSTREAM_RC_COMMENT\$|$JINN_RC_COMMENT|" "$RC" > "$RC_TMP" \
+      && cat "$RC_TMP" > "$RC"
+    rm -f "$RC_TMP"
+  fi
+done
+
+# 2. Fresh-machine PATH hole: the installer only appends the PATH line to an
+#    EXISTING rc file, so a machine with none silently gets no PATH entry.
+#    If no rc file puts ~/.local/bin on PATH, create/append the one matching
+#    the user's shell. RC_FILE also feeds the next-steps message below, so
+#    it names the rc file actually involved.
+RC_FILE=""
+for RC in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile"; do
+  if [ -f "$RC" ] && grep -q '\.local/bin' "$RC" 2>/dev/null; then
+    RC_FILE="$RC"
+    break
+  fi
+done
+if [ -z "$RC_FILE" ]; then
+  case "${SHELL:-}" in
+    *zsh*)  RC_FILE="$HOME/.zshrc" ;;
+    *bash*) RC_FILE="$HOME/.bashrc" ;;
+    *)      RC_FILE="$HOME/.profile" ;;
+  esac
+  {
+    echo ""
+    echo "$JINN_RC_COMMENT"
+    echo 'export PATH="$HOME/.local/bin:$PATH"'
+  } >> "$RC_FILE"
+fi
+RC_DISPLAY=$(printf '%s' "$RC_FILE" | sed "s|^$HOME|~|")
+
 printf '\n%s\n' "jinn-agent is installed."
 echo ""
 echo "Next steps (ignore any instructions above that name another command):"
 echo ""
 echo "  1. Reload your shell so ~/.local/bin is on PATH:"
-echo "     source ~/.zshrc   (or your shell's rc file)"
+echo "     source $RC_DISPLAY"
 echo ""
 echo "  2. Configure a model provider:"
 echo "     jinn-agent setup"
