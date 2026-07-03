@@ -59,6 +59,7 @@ Every other upstream file is unmodified.
 | `bin/jinn-agent`, `setup.sh` | The human-facing entrypoints (run + one-time setup) |
 | `plugins/jinn/` | The integration surface: first-run consent flow, capture buffer + payload-agnostic pickup, `jinn-layer` subprocess wrapper, agent tools, `/jinn` + `/corpus` slash commands |
 | `plugins/jinn/skin/jinn.yaml` | The jinn-agent skin (branding strings + banner art); installed to `$HERMES_HOME/skins/` by `bin/jinn-agent`, defaulted for fresh installs, never overwrites an explicit skin choice |
+| `plugins/jinn/soul/SOUL.md` | The jinn-agent identity template (mono#1386) — the upstream default soul with the identity sentence rewritten; installed to `$HERMES_HOME/SOUL.md` by `bin/jinn-agent` ONLY when SOUL.md is absent. An existing soul (user-written or previously seeded) is never overwritten — unlike the skin sync |
 | `tests/plugins/test_jinn_plugin.py` | Consent-gating integration tests |
 | `tests/plugins/test_jinn_branding.py` | Runtime-branding regression tests (mono#1358) — first screen says jinn-agent, no upstream brand words in default session chrome |
 | `JINN.md` | This document |
