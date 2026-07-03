@@ -1,0 +1,16 @@
+#!/bin/sh
+# jinn-agent — the Jinn harness. Single human-facing entrypoint.
+#
+# State isolation: jinn-agent keeps its own home (~/.jinn-agent) so it never
+# collides with a stock install of the upstream agent (~/.hermes) — separate
+# config, auth, skills, memories, sessions. Override with JINN_AGENT_HOME, or
+# set HERMES_HOME explicitly to share state with a stock install on purpose.
+if [ -z "$HERMES_HOME" ]; then
+  export HERMES_HOME="${JINN_AGENT_HOME:-$HOME/.jinn-agent}"
+fi
+cd "$(dirname "$0")/.."
+# Prefer the repo-local venv the installer creates; fall back to system python.
+if [ -x "venv/bin/python" ]; then
+  exec venv/bin/python cli.py "$@"
+fi
+exec python3 cli.py "$@"
