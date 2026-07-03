@@ -489,19 +489,36 @@ def get_random_tip(exclude_recent: int = 0) -> str:
 # --- resolve as upstream code + this tail.
 # _JINN_TIPS drops OpenClaw-era tips and Nous tips (they advertise
 # upstream-specific services and cannot be honestly rebranded) and rebrands
-# capital-H "Hermes" to "jinn-agent". Lowercase `hermes <subcmd>` command
-# strings survive intentionally — they are functional, not branding.
+# capital-H "Hermes" to "jinn-agent". Per mono#1366 it also rewrites what a
+# jinn-agent user can actually run and inspect:
+#   - home-dir state paths: `~/.hermes/…` -> `~/.jinn-agent/…` (bin/jinn-agent
+#     exports HERMES_HOME=~/.jinn-agent). Workspace-relative `.hermes/…`
+#     references (no ~ prefix, e.g. `.hermes/plans/`, `.hermes.md`,
+#     `./.hermes/plugins/`) are repo-local and stay untouched.
+#   - command forms: lowercase `hermes <subcmd>` -> `jinn-agent <subcmd>`
+#     (the wrapper forwards subcommands; there is no `hermes` on PATH).
+#     HERMES_* env var names and flag-only forms (`hermes -c`) are untouched.
+# Tips a rewrite would push past the upstream 150-char single-line budget
+# are dropped instead.
 # get_random_tip is wrapped: draws come from _JINN_TIPS only when the
 # active skin is `jinn`; any other skin (including an explicit
 # `display.skin: default`) gets upstream behaviour unchanged, so branding
 # stays consistent with the banner.
 import re as _re
 
+
+def _jinn_rebrand_tip(tip: str) -> str:
+    tip = _re.sub(r"\bHermes\b", "jinn-agent", tip)
+    tip = tip.replace("~/.hermes/", "~/.jinn-agent/")
+    return _re.sub(r"\bhermes (\w+)", r"jinn-agent \1", tip)
+
+
 _JINN_TIPS = [
-    _re.sub(r"\bHermes\b", "jinn-agent", _tip)
+    _jinn_rebrand_tip(_tip)
     for _tip in TIPS
     if not _re.search(r"claw", _tip, _re.IGNORECASE)
     and not _re.search(r"Nous", _tip)
+    and len(_jinn_rebrand_tip(_tip)) <= 150
 ]
 
 _upstream_get_random_tip = get_random_tip
