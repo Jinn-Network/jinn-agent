@@ -192,7 +192,7 @@ _JINN_HELP = (
     "  /jinn preview   preview the held (pending) trace exactly as it would publish\n"
     "  /jinn ledger    the contribution ledger — what left this machine\n"
     "  /jinn veto      withhold the current task (recorded locally, never published)\n"
-    "  /jinn skills install <ref>   install a corpus-published skill into Hermes's skills\n"
+    "  /jinn skills install <ref>   install a corpus-published skill into the agent's skills\n"
     "  /jinn skills list            jinn-installed skills\n"
     "  /jinn skills uninstall <slug>  remove a jinn-installed skill\n"
 )
@@ -259,7 +259,7 @@ def _handle_jinn(command_args: str = "", session_id: str = "", task_id: str = ""
                 path = skills_install.install(parts[2], runner=_runner)
             except Exception as exc:
                 return f"install failed: {exc}"
-            return f"installed — {path}\nHermes's skill loader picks it up from here."
+            return f"installed — {path}\nThe agent's skill loader picks it up from here."
         if action == "uninstall":
             if len(parts) < 3:
                 return "usage: /jinn skills uninstall <slug>"

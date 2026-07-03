@@ -171,6 +171,58 @@ def test_random_tips_clean_under_jinn_skin(jinn_skin_active):
     )
 
 
+def _non_docstring_string_literals(source: str):
+    """Yield (lineno, value) for every string literal except docstrings.
+
+    Runtime string literals in the jinn plugin are the pool every
+    user-facing message is drawn from (help text, slash-command replies,
+    error strings, f-string fragments), so pinning at the source level
+    catches brand-word recurrences anywhere in the plugin. Docstrings are
+    excluded: they are developer-facing and legitimately name the upstream
+    agent when describing the fork relationship. Functional identifiers
+    (``HERMES_HOME``, ``.hermes``, ``hermes_cli`` imports) don't trip the
+    pin either — BRAND_WORDS matches the prose casing ``Hermes``, not the
+    all-caps env var or lowercase command/path forms.
+    """
+    import ast
+
+    tree = ast.parse(source)
+    docstrings = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Module, ast.ClassDef,
+                             ast.FunctionDef, ast.AsyncFunctionDef)):
+            body = getattr(node, "body", [])
+            if (body and isinstance(body[0], ast.Expr)
+                    and isinstance(body[0].value, ast.Constant)
+                    and isinstance(body[0].value.value, str)):
+                docstrings.add(id(body[0].value))
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Constant) and isinstance(node.value, str)
+                and id(node) not in docstrings):
+            yield node.lineno, node.value
+
+
+def test_jinn_plugin_source_strings_have_no_upstream_branding():
+    """Regression for Jinn-Network/mono#1371: `/jinn skills install`
+    replied "Hermes's skill loader picks it up from here." — an upstream
+    brand word on a Jinn-owned human-facing surface."""
+    plugin_dir = REPO_ROOT / "plugins" / "jinn"
+    offenders = []
+    for py in sorted(plugin_dir.rglob("*.py")):
+        source = py.read_text(encoding="utf-8")
+        for lineno, value in _non_docstring_string_literals(source):
+            match = BRAND_WORDS.search(value)
+            if match:
+                offenders.append(
+                    f"{py.relative_to(REPO_ROOT)}:{lineno}: "
+                    f"{match.group(0)!r} in {value!r}"
+                )
+    assert not offenders, (
+        "upstream brand words in jinn plugin string literals:\n"
+        + "\n".join(offenders)
+    )
+
+
 def test_default_skin_gets_untouched_upstream_tips():
     """An explicit `display.skin: default` must not mix jinn tips with the
     upstream Hermes banner — upstream TIPS stays unfiltered and draws come
