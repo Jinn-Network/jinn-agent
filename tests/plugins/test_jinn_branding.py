@@ -155,6 +155,44 @@ def test_jinn_tips_list_has_no_upstream_branding():
     )
 
 
+def test_jinn_tips_have_no_home_hermes_paths():
+    """mono#1366: jinn-agent state lives under ~/.jinn-agent (bin/jinn-agent
+    exports HERMES_HOME) — tips must not point users at ~/.hermes/.
+    Workspace-relative `.hermes/` references (no ~ prefix, e.g.
+    '.hermes/plans/') are repo-local and intentionally untouched."""
+    from hermes_cli.tips import _JINN_TIPS
+
+    offenders = [t for t in _JINN_TIPS if "~/.hermes" in t]
+    assert not offenders, f"home-dir hermes paths in _JINN_TIPS: {offenders}"
+    assert any("~/.jinn-agent/" in t for t in _JINN_TIPS), (
+        "path rewrite produced no ~/.jinn-agent/ tips"
+    )
+
+
+def test_jinn_tips_have_no_hermes_command_forms():
+    """mono#1366: there is no `hermes` on PATH for jinn-agent users; the
+    wrapper forwards subcommands, so `jinn-agent <subcmd>` is the invocable
+    form. HERMES_* env var names and repo-local .hermes files stay."""
+    import re as _re
+    from hermes_cli.tips import _JINN_TIPS
+
+    cmd_form = _re.compile(r"\bhermes (\w+)")
+    offenders = [t for t in _JINN_TIPS if cmd_form.search(t)]
+    assert not offenders, f"hermes command forms in _JINN_TIPS: {offenders}"
+    assert any("jinn-agent config check" in t for t in _JINN_TIPS), (
+        "command rewrite produced no jinn-agent command tips"
+    )
+
+
+def test_jinn_tips_fit_the_single_line_budget():
+    """The rewrites lengthen tips (+4 chars each) — keep the upstream
+    <= 150 char single-line budget; overflowing tips are dropped."""
+    from hermes_cli.tips import _JINN_TIPS
+
+    over = [t for t in _JINN_TIPS if len(t) > 150]
+    assert not over, f"tips over 150 chars: {over}"
+
+
 def test_random_tips_clean_under_jinn_skin(jinn_skin_active):
     import random
 
