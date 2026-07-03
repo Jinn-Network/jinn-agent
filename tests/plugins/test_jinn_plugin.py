@@ -210,3 +210,37 @@ def test_corpus_command_delegates_to_layer(isolated_home):
     out = jinn._handle_corpus(command_args="prediction")
     assert out == "ok"
     assert isolated_home.calls[0][1:4] == ["corpus", "search", "prediction"]
+
+
+# ── TUI-safe consent commands (no blocking reads) ────────────────────────────
+
+def test_slash_consent_shows_explainer_with_command_keys(isolated_home):
+    out = jinn._handle_jinn(command_args="consent")
+    assert "jinn-agent is an open coding harness" in out
+    assert "/jinn consent accept" in out
+    assert consent.load_state()["status"] == consent.UNSET  # nothing recorded
+
+
+def test_slash_consent_accept_requires_deliberate_confirm(isolated_home):
+    out = jinn._handle_jinn(command_args="consent accept")
+    assert "To confirm: /jinn consent accept confirm" in out
+    assert consent.load_state()["status"] == consent.UNSET
+    out = jinn._handle_jinn(command_args="consent accept confirm")
+    assert "Contribution is ON" in out
+    assert consent.load_state()["status"] == consent.ACCEPTED
+
+
+def test_slash_consent_decline_records_reader_only(isolated_home):
+    out = jinn._handle_jinn(command_args="consent decline confirm")
+    assert "Contribution is OFF" in out
+    assert consent.load_state()["status"] == consent.DECLINED
+    assert consent.capture_enabled() is False
+
+
+def test_slash_consent_never_calls_blocking_input(isolated_home, monkeypatch):
+    def boom(*_a, **_k):
+        raise AssertionError("blocking input() called from the slash surface")
+    monkeypatch.setattr("builtins.input", boom)
+    for args in ("consent", "consent accept", "consent accept confirm",
+                 "consent decline", "consent decline confirm"):
+        jinn._handle_jinn(command_args=args)
