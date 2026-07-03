@@ -50,4 +50,14 @@ if "jinn" not in enabled:
     plugins["enabled"] = enabled
     path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
 PYEOF
-exec "$PY" cli.py "$@"
+# Dispatch through the hermes console entry (hermes_cli.main) — the only
+# surface carrying the full CLI: subcommands (setup, status, doctor, …) and
+# the non-interactive single-query flags (chat -q PROMPT -Q --yolo). The
+# bare TUI parser reached by exec'ing the top-level script directly has
+# none of those (mono#1361).
+for ENV_DIR in venv .venv; do
+  if [ -x "$ENV_DIR/bin/hermes" ]; then
+    exec "$ENV_DIR/bin/hermes" "$@"
+  fi
+done
+exec "$PY" -c 'import sys; from hermes_cli.main import main; sys.exit(main())' "$@"
