@@ -25,6 +25,7 @@ import os
 import shutil
 import stat
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -37,9 +38,27 @@ echo "$HERMES_HOME" > "$(dirname "$0")/recorded-home"
 mkdir -p "$(dirname "$0")/venv/bin"
 printf '#!/bin/sh\\n' > "$(dirname "$0")/venv/bin/hermes"
 chmod +x "$(dirname "$0")/venv/bin/hermes"
+# Stub venv python: records whatever program setup.sh pipes into it
+# (the tirith ensure step) so tests can assert the step ran. NO network.
+cat > "$(dirname "$0")/venv/bin/python" <<'PYSTUB'
+#!/bin/sh
+cat > "$(cd "$(dirname "$0")/../.." && pwd)/recorded-tirith-ensure"
+exit 0
+PYSTUB
+chmod +x "$(dirname "$0")/venv/bin/python"
 mkdir -p "$HOME/.local/bin"
 ln -sf "$(cd "$(dirname "$0")" && pwd)/venv/bin/hermes" "$HOME/.local/bin/hermes"
 """
+
+# Same installer, but the venv python fails: simulates an offline install
+# where the tirith download cannot complete.
+STUB_INSTALLER_TIRITH_FAILS = STUB_INSTALLER.replace(
+    'cat > "$(cd "$(dirname "$0")/../.." && pwd)/recorded-tirith-ensure"\nexit 0',
+    "exit 1",
+)
+# Guard against silent drift: if the replace() target no longer matches
+# STUB_INSTALLER, the failure variant would quietly test the happy path.
+assert "recorded-tirith-ensure" not in STUB_INSTALLER_TIRITH_FAILS
 
 
 @pytest.fixture()
@@ -157,6 +176,89 @@ def test_trailing_wizard_prompt_failure_does_not_abort_the_fork_steps(sandbox):
     assert "jinn-agent" in result.stdout
     hermes_link = home / ".local" / "bin" / "hermes"
     assert not hermes_link.exists() and not hermes_link.is_symlink()
+
+
+# --- tirith at setup time (mono#1359) -------------------------------------
+# setup.sh must ensure the tirith security scanner is installed, so the
+# first session does not start with "command scanning will use pattern
+# matching only". Offline installs degrade with a clear message, non-fatally.
+
+
+def test_setup_invokes_the_tirith_ensure_step(sandbox):
+    home, repo = sandbox
+    result = _run(home, repo)
+    assert result.returncode == 0, result.stderr
+    recorded = repo / "recorded-tirith-ensure"
+    assert recorded.exists(), "setup.sh never ran the tirith ensure step"
+    program = recorded.read_text()
+    assert "tirith" in program
+    assert "_install_tirith" in program
+
+
+def test_tirith_install_failure_degrades_without_failing_setup(sandbox):
+    home, repo = sandbox
+    (repo / "setup-hermes.sh").write_text(
+        STUB_INSTALLER_TIRITH_FAILS, encoding="utf-8"
+    )
+    result = _run(home, repo)
+    assert result.returncode == 0, result.stderr
+    link = home / ".local" / "bin" / "jinn-agent"
+    assert link.is_symlink(), "tirith failure must not abort the fork steps"
+    combined = result.stdout + result.stderr
+    assert "tirith" in combined
+    assert "pattern-matching" in combined, (
+        "offline installs must degrade with a clear message"
+    )
+
+
+def _tirith_ensure_program() -> str:
+    """The python program setup.sh pipes into the venv (the tirith step)."""
+    text = (REPO_ROOT / "setup.sh").read_text(encoding="utf-8")
+    return text.split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+
+
+def test_tirith_ensure_program_short_circuits_when_tirith_is_present(tmp_path):
+    """Run the REAL heredoc program under the suite's python: with a tirith
+    already on PATH it must exit 0 before reaching _install_tirith — no
+    network. Also proves the program's imports actually resolve (the stub
+    installer tests never execute it)."""
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_tirith = fake_bin / "tirith"
+    fake_tirith.write_text("#!/bin/sh\n", encoding="utf-8")
+    fake_tirith.chmod(0o755)
+    env = dict(os.environ)
+    env["PATH"] = f"{fake_bin}{os.pathsep}{env.get('PATH', '')}"
+    env["HERMES_HOME"] = str(tmp_path / "hermes-home")
+    result = subprocess.run(
+        [sys.executable, "-"],
+        input=_tirith_ensure_program(),
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=env,
+        cwd=str(REPO_ROOT),
+    )
+    assert result.returncode == 0, result.stderr
+    from tools import tirith_security as ts
+
+    if ts.is_platform_supported():
+        assert f"tirith present: {fake_tirith}" in result.stdout
+    else:
+        assert "pattern matching" in result.stdout
+
+
+def test_upstream_private_helper_the_ensure_step_calls_still_exists():
+    """setup.sh's heredoc calls tools.tirith_security._install_tirith — an
+    upstream PRIVATE helper (the public ensure_installed() is a background
+    thread, no good for a blocking setup step). A rename fails soft at
+    install time (degrade warning); this makes it fail LOUD in CI."""
+    from tools import tirith_security as ts
+
+    assert callable(getattr(ts, "_install_tirith", None)), (
+        "upstream renamed/removed _install_tirith — update the tirith "
+        "ensure heredoc in setup.sh"
+    )
 
 
 def test_next_steps_name_only_fork_commands(sandbox):
