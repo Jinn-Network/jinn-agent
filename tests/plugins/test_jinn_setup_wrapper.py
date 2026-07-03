@@ -32,8 +32,11 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 STUB_INSTALLER = """#!/bin/sh
-# Stub of the upstream installer: the two side effects under test.
+# Stub of the upstream installer: the side effects under test.
 echo "$HERMES_HOME" > "$(dirname "$0")/recorded-home"
+mkdir -p "$(dirname "$0")/venv/bin"
+printf '#!/bin/sh\\n' > "$(dirname "$0")/venv/bin/hermes"
+chmod +x "$(dirname "$0")/venv/bin/hermes"
 mkdir -p "$HOME/.local/bin"
 ln -sf "$(cd "$(dirname "$0")" && pwd)/venv/bin/hermes" "$HOME/.local/bin/hermes"
 """
@@ -119,8 +122,12 @@ def test_jinn_agent_command_link_is_created(sandbox):
 
 def test_hermes_link_is_restored_even_when_the_installer_fails(sandbox):
     home, repo = sandbox
+    # A REAL failure: the installer dies without producing the venv.
     (repo / "setup-hermes.sh").write_text(
-        STUB_INSTALLER + "exit 7\n", encoding="utf-8"
+        '#!/bin/sh\necho "$HERMES_HOME" > "$(dirname "$0")/recorded-home"\n'
+        'mkdir -p "$HOME/.local/bin"\n'
+        'ln -sf /nonexistent "$HOME/.local/bin/hermes"\nexit 7\n',
+        encoding="utf-8",
     )
     link_dir = home / ".local" / "bin"
     link_dir.mkdir(parents=True)
@@ -129,6 +136,27 @@ def test_hermes_link_is_restored_even_when_the_installer_fails(sandbox):
     result = _run(home, repo)
     assert result.returncode != 0
     assert os.readlink(link_dir / "hermes") == str(stock_target)
+    assert not (home / ".local" / "bin" / "jinn-agent").is_symlink()
+
+
+def test_trailing_wizard_prompt_failure_does_not_abort_the_fork_steps(sandbox):
+    """Non-interactive stdin: the upstream installer's LAST step is an
+    interactive ``read`` (run-the-wizard prompt), which fails without a TTY
+    and exits 1 AFTER the install is complete. The wrapper must judge
+    success by the artifact the install exists to produce (venv console
+    script), not by that exit code — found live on the 2026-07-03 verify
+    run, where the abort skipped the jinn-agent link and next steps."""
+    home, repo = sandbox
+    (repo / "setup-hermes.sh").write_text(
+        STUB_INSTALLER + "exit 1\n", encoding="utf-8"
+    )
+    result = _run(home, repo)
+    assert result.returncode == 0, result.stderr
+    link = home / ".local" / "bin" / "jinn-agent"
+    assert link.is_symlink()
+    assert "jinn-agent" in result.stdout
+    hermes_link = home / ".local" / "bin" / "hermes"
+    assert not hermes_link.exists() and not hermes_link.is_symlink()
 
 
 def test_next_steps_name_only_fork_commands(sandbox):
