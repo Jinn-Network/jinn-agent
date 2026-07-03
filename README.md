@@ -38,6 +38,11 @@ its state under `~/.jinn-agent/`.
   automatically; anything unverified is only suggested — it never
   self-installs.
 
+`/corpus` and `/jinn skills install` shell out to the `jinn-layer` CLI —
+the same install as under Contributing
+(`npm install -g @jinn-network/client@canary`). Reading needs the CLI but
+no account or consent.
+
 ## Contributing (off until you say so)
 
 ```
