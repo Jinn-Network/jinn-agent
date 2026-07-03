@@ -114,7 +114,7 @@ def assemble(
 
     status = "completed" if (completed and not interrupted) else ("abandoned" if interrupted else "failed")
     duration_ms = max(0, (time.time_ns() - int(buf["startedNs"])) // 1_000_000)
-    tags = ["jinn-hermes"]
+    tags = [HARNESS_NAME]
     if buf.get("platform"):
         tags.append(str(buf["platform"]))
 
