@@ -166,3 +166,81 @@ def test_entrypoint_exports_repo_and_keeps_single_heredoc():
         "entrypoint must keep exactly one heredoc block — the snippet tests "
         "split on the single PY" + "EOF marker"
     )
+
+
+# ---------------------------------------------------------------------------
+# Cwd preservation (mono#1369) — the entrypoint cd's into the repo root for
+# venv resolution and the ensure-block, but must return to the invoking
+# directory before exec'ing the agent. Regression for the dogfood run where
+# `jinn-agent chat -q "write a file ..."` from an empty work dir wrote the
+# file into the repo clone instead.
+#
+# The test copies the real entrypoint into a fake repo layout with a stub
+# `venv/bin/hermes` that prints its cwd, invokes it from a DIFFERENT temp
+# directory, and asserts the agent saw the invoking directory — while the
+# ensure-block still found the repo (skin installed into the temp home).
+# ---------------------------------------------------------------------------
+
+
+def _real_venv_python() -> Path | None:
+    for env_dir in ("venv", ".venv"):
+        candidate = REPO_ROOT / env_dir / "bin" / "python"
+        if candidate.exists():
+            return candidate
+    return None
+
+
+@pytest.mark.skipif(_real_venv_python() is None, reason="no venv in this checkout")
+def test_entrypoint_preserves_user_cwd(tmp_path):
+    # Fake repo: real entrypoint text, stub hermes that prints its cwd,
+    # stub python delegating to the real venv python (pyyaml available),
+    # and the repo skin file so the ensure-block has work to do.
+    fake_repo = tmp_path / "fakerepo"
+    (fake_repo / "bin").mkdir(parents=True)
+    entry = fake_repo / "bin" / "jinn-agent"
+    entry.write_text(ENTRYPOINT.read_text(encoding="utf-8"), encoding="utf-8")
+    entry.chmod(0o755)
+
+    venv_bin = fake_repo / "venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    stub_hermes = venv_bin / "hermes"
+    stub_hermes.write_text("#!/bin/sh\npwd\n", encoding="utf-8")
+    stub_hermes.chmod(0o755)
+    stub_python = venv_bin / "python"
+    stub_python.write_text(
+        f'#!/bin/sh\nexec "{_real_venv_python()}" "$@"\n', encoding="utf-8"
+    )
+    stub_python.chmod(0o755)
+
+    skin_dest = fake_repo / "plugins" / "jinn" / "skin" / "jinn.yaml"
+    skin_dest.parent.mkdir(parents=True)
+    skin_dest.write_text(SKIN_FILE.read_text(encoding="utf-8"), encoding="utf-8")
+
+    invoke_dir = tmp_path / "workdir"
+    invoke_dir.mkdir()
+    home = tmp_path / "home"
+
+    env = dict(os.environ)
+    env["JINN_AGENT_HOME"] = str(home)
+    env.pop("HERMES_HOME", None)
+    env.pop("JINN_AGENT_REPO", None)
+    result = subprocess.run(
+        [str(entry)],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env=env,
+        cwd=str(invoke_dir),
+    )
+    assert result.returncode == 0, result.stderr[-2000:]
+
+    printed = result.stdout.strip()
+    assert Path(printed).resolve() == invoke_dir.resolve(), (
+        "the agent must run in the directory jinn-agent was invoked from, "
+        f"not the repo clone — got {printed!r}"
+    )
+    # The ensure-block still resolved the repo via JINN_AGENT_REPO.
+    assert (home / "skins" / "jinn.yaml").is_file(), (
+        "skin not installed — the cwd fix broke the ensure-block's "
+        "repo resolution"
+    )
