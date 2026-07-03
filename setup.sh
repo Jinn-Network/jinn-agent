@@ -48,6 +48,11 @@ fi
 # Ensure the tirith security scanner is present at install time so the
 # first session does not start degraded (mono#1359). Non-fatal: offline
 # installs degrade with a clear message; the runtime retries later.
+# Deliberately calls upstream's PRIVATE _install_tirith — the public
+# ensure_installed() is fire-and-forget (background thread), useless for
+# a setup step that must block until the download completes. If upstream
+# renames the helper, the heredoc exits non-zero and falls into the same
+# degrade warning below; setup itself still succeeds.
 if ! "$REPO_DIR/venv/bin/python" - <<'PY'
 import os, shutil, sys
 from tools import tirith_security as ts
