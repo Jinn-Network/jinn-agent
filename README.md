@@ -56,8 +56,9 @@ on-chain anchor link.
 Contributing needs two things reading doesn't:
 
 1. **The `jinn-layer` CLI** (scrub, publish, anchor, ledger):
-   `npm install -g @jinn-network/client` (Node 22). jinn-agent finds it on
-   PATH, or set `JINN_LAYER_BIN`.
+   `npm install -g @jinn-network/client@canary` (Node 22; the jinn-layer
+   CLI ships on the canary tag until the next stable release, >= 0.1.10,
+   carries it). jinn-agent finds it on PATH, or set `JINN_LAYER_BIN`.
 2. **A Jinn testnet identity** to anchor contributions under (an agent id +
    Safe from the Jinn operator bootstrap — `jinn run` walks you through it,
    faucet-funded, testnet only). Export it where you launch jinn-agent:
