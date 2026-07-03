@@ -159,6 +159,67 @@ def test_abandoned_session_is_marked_abandoned(isolated_home, tmp_path):
     assert task["outcome"]["status"] == "abandoned"
 
 
+# ── Draining held pending traces (mono issue #1370) ─────────────────────────
+#
+# The preview gate's own copy promises "then it publishes on future task
+# ends" — so a task held before the preview must drain at the next
+# publishing session end, not stay orphaned in the pending dir forever.
+
+def test_unpreviewed_task_is_held_then_drained_by_next_session_end(isolated_home, tmp_path):
+    consent.save_state(consent.ACCEPTED)
+    _run_session(session_id="sA", task_id="tA")
+    # (1) Held: file exists, nothing published.
+    assert _write_calls(isolated_home) == []
+    held = _pending_files(tmp_path)
+    assert len(held) == 1
+    held_name = held[0].name
+
+    # (2) Preview, then a later task completes — BOTH publish.
+    consent.mark_previewed()
+    _run_session(session_id="sB", task_id="tB")
+    publishes = [c for c in _write_calls(isolated_home) if c[1] == "publish"]
+    published_names = [Path(c[2]).name for c in publishes]
+    assert len(publishes) == 2
+    assert held_name in published_names
+    assert _pending_files(tmp_path) == []  # pending dir fully drained
+
+
+def test_drain_failure_leaves_file_and_still_drains_the_rest(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    capture_buffer.reset()
+    consent.save_state(consent.ACCEPTED)
+
+    class SelectiveRunner(RunnerSpy):
+        """Fails publish only for files whose name contains 'sA1'."""
+
+        def __call__(self, argv: list[str]) -> tuple[int, str]:
+            self.calls.append(argv)
+            if len(argv) > 2 and argv[1] == "publish" and "sA1" in argv[2]:
+                return 1, "anchor tx reverted"
+            return 0, "ok"
+
+    runner = SelectiveRunner()
+    jinn._runner = runner
+    try:
+        # Two held tasks before the preview.
+        _run_session(session_id="sA1", task_id="tA1")
+        _run_session(session_id="sA2", task_id="tA2")
+        assert len(_pending_files(tmp_path)) == 2
+        consent.mark_previewed()
+        # Must not raise despite the sA1 drain failure.
+        _run_session(session_id="sB", task_id="tB")
+    finally:
+        jinn._runner = None
+
+    publishes = [c for c in _write_calls(runner) if c[1] == "publish"]
+    published_names = {Path(c[2]).name for c in publishes}
+    # All three were attempted…
+    assert published_names == {"sA1.json", "sA2.json", "sB.json"}
+    # …the failed one is retained for a later retry, the rest unlinked.
+    remaining = [p.name for p in _pending_files(tmp_path)]
+    assert remaining == ["sA1.json"]
+
+
 # ── Consent flow ─────────────────────────────────────────────────────────────
 
 def test_consent_flow_bare_enter_defaults_to_decline(isolated_home):
