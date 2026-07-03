@@ -2274,18 +2274,24 @@ def cmd_chat(args):
 
     # First-run guard: check if any provider is configured before launching
     if not _has_any_provider_configured():
-        print()
-        print(
-            "It looks like Hermes isn't configured yet -- no API keys or providers found."
-        )
-        print()
-        print("  Run:  hermes setup")
-        print()
-
+        # jinn-agent fork patch (Jinn-Network/mono#1388): the recovery
+        # command printed here must exist on the user's PATH — resolve the
+        # CLI name via the active skin's branding (default-skin output is
+        # byte-identical; see hermes_cli/setup.py::_setup_cli_names).
         from hermes_cli.setup import (
+            _setup_cli_names,
             is_interactive_stdin,
             print_noninteractive_setup_guidance,
         )
+
+        _cli_cmd, _cli_name = _setup_cli_names()
+        print()
+        print(
+            f"It looks like {_cli_name} isn't configured yet -- no API keys or providers found."
+        )
+        print()
+        print(f"  Run:  {_cli_cmd} setup")
+        print()
 
         if not is_interactive_stdin():
             print_noninteractive_setup_guidance(
@@ -2301,7 +2307,7 @@ def cmd_chat(args):
             cmd_setup(args)
             return
         print()
-        print("You can run 'hermes setup' at any time to configure.")
+        print(f"You can run '{_cli_cmd} setup' at any time to configure.")
         sys.exit(1)
 
     # Start update check in background (runs while other init happens).
