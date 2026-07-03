@@ -85,6 +85,13 @@ NODE_STUB_LATER = (
 
 KEYS_LINE = "[A] Accept · [D] Decline · [P] Preview a scrubbed envelope · [?] Docs"
 
+# The slash-command surface (TUI-safe: no blocking reads — see run_consent_flow's
+# docstring). Same deliberate two-step as the keyboard flow.
+COMMANDS_LINE = (
+    "Accept: /jinn consent accept · Decline: /jinn consent decline · "
+    "Preview a scrubbed envelope first: /jinn preview · Docs: docs.jinn.network/harness"
+)
+
 
 # ── State store ──────────────────────────────────────────────────────────────
 
@@ -134,7 +141,7 @@ def capture_enabled() -> bool:
 
 # ── The flow ─────────────────────────────────────────────────────────────────
 
-def render_explainer() -> str:
+def render_explainer(keys_line: str = KEYS_LINE) -> str:
     lines = [OPENING, ""]
     lines += [f"  {s}" for s in WHY]
     lines.append("")
@@ -143,8 +150,26 @@ def render_explainer() -> str:
     lines.append("")
     lines.append(DECLINE_LINE)
     lines.append("")
-    lines.append(KEYS_LINE)
+    lines.append(keys_line)
     return "\n".join(lines)
+
+
+def confirm_accept_command() -> str:
+    return CONFIRM_ACCEPT.replace("[Y] Yes · [N] No", "To confirm: /jinn consent accept confirm")
+
+
+def confirm_decline_command() -> str:
+    return CONFIRM_DECLINE.replace("[Y] Yes · [N] No", "To confirm: /jinn consent decline confirm")
+
+
+def record_accept() -> str:
+    save_state(ACCEPTED)
+    return RECORDED_ON + "\n\n" + NODE_STUB_LATER
+
+
+def record_decline() -> str:
+    save_state(DECLINED)
+    return RECORDED_OFF
 
 
 def run_consent_flow(
@@ -152,7 +177,14 @@ def run_consent_flow(
     print_fn: Callable[[str], None],
     preview_fn: Optional[Callable[[], None]] = None,
 ) -> str:
-    """The first-run consent flow. Returns the recorded status.
+    """The first-run consent flow for a PLAIN TERMINAL (blocking reads).
+
+    Do NOT call from a TUI slash-command handler — ``input()`` blocks on
+    stdin the TUI owns and deadlocks the session (first cold-clone dogfood
+    finding, 2026-07-03). The slash surface uses the stateless
+    ``/jinn consent accept|decline [confirm]`` commands instead.
+
+    Returns the recorded status.
 
     ``unset -> accepted | declined``; per-action lifecycle
     ``idle -> confirming -> recorded``. Bare Enter defaults to decline —

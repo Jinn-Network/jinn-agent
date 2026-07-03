@@ -191,9 +191,15 @@ def _handle_jinn(command_args: str = "", session_id: str = "", task_id: str = ""
         return "\n".join(lines)
 
     if sub == "consent":
-        collected: list[str] = []
-        status = consent.run_consent_flow(input, collected.append)
-        return "\n".join(collected + [f"(recorded: {status})"])
+        # TUI-safe: stateless commands, never blocking reads. Same deliberate
+        # two-step as the design's keyboard flow (idle -> confirming -> recorded).
+        action = parts[1] if len(parts) > 1 else ""
+        confirmed = len(parts) > 2 and parts[2] == "confirm"
+        if action == "accept":
+            return consent.record_accept() if confirmed else consent.confirm_accept_command()
+        if action == "decline":
+            return consent.record_decline() if confirmed else consent.confirm_decline_command()
+        return consent.render_explainer(consent.COMMANDS_LINE)
 
     if sub == "preview":
         pending = _latest_pending()
