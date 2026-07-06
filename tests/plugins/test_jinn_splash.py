@@ -6,10 +6,12 @@ lowercase ``jinn`` wordmark + gold rule + version + four live status lines
 ``docs/design/artifacts/2026-07-06-corpus-onboarding/1319-terminal-splash.html``.
 
 These tests assert the exact rendered strings and colours per state — not an
-eyeball. They cover: the four status lines in every documented state, the
-fixed ordering, contribution-line omission pre-consent, ``checking…`` for
-unresolved values, no emoji, gold-appears-exactly-twice, and the 80x24 ASCII
-fallback fit. banner.py is an owned upstream file (JINN.md); this splash
+eyeball. They cover: the status lines in every documented state, the fixed
+ordering, contribution-line omission pre-consent, node-line omission (the fork
+has no node source), ``checking…`` for unresolved network/corpus values, no
+emoji, gold-appears-exactly-twice-on-testnet (with the sanctioned mainnet
+three-gold exception — the network line is gold on mainnet), and the 80x24
+ASCII fallback fit. banner.py is an owned upstream file (JINN.md); this splash
 surface is re-derivable from these tests.
 """
 
@@ -121,6 +123,29 @@ def test_node_not_running_is_dim():
     assert f"{_TC['dim']}not running" in out
 
 
+def test_node_line_omitted_when_key_absent():
+    # The fork has no local node concept (node operation is the separate mono
+    # client daemon), so an absent node key omits the line entirely — same rule
+    # as the pre-consent contribution line. A perpetual node "checking…" that
+    # can never resolve would be misleading, so it must not render.
+    state = _healthy_state()
+    del state["node"]
+    del state["node_vessel"]
+    plain = _plain(render_jinn_splash(state, truecolor=True))
+    assert "node" not in plain, plain
+    # the other three lines still render
+    for label in ("network", "corpus", "contribution"):
+        assert f"\n     {label}" in plain
+
+
+def test_node_omitted_in_fallback_too():
+    state = _healthy_state()
+    del state["node"]
+    del state["node_vessel"]
+    plain = _plain(render_jinn_splash(state, truecolor=False))
+    assert "node" not in plain
+
+
 # ── ordering + pre-consent omission ──────────────────────────────────────────
 
 
@@ -158,6 +183,30 @@ def test_gold_appears_exactly_twice_on_testnet():
     # centre point of the sigil + the version — nothing else.
     out = render_jinn_splash(_healthy_state(), truecolor=True)
     assert out.count(_TC["gold"]) == 2, _plain(out)
+
+
+def test_gold_count_on_mainnet_is_three():
+    # Mainnet is the one sanctioned exception to "gold exactly twice": the
+    # design renders the `base · mainnet` network line gold (issue #1417 /
+    # design 3.3). So mainnet legitimately carries three golds — sigil centre
+    # point + version + network line — where testnet reserves gold to two.
+    out = render_jinn_splash(
+        _healthy_state(network="mainnet", network_label="mainnet"), truecolor=True
+    )
+    assert out.count(_TC["gold"]) == 3, _plain(out)
+
+
+def test_gold_count_on_mainnet_update_available_is_two():
+    # Update-available drops the version row to amber, so mainnet's three golds
+    # fall to two (sigil centre point + network line); testnet would be one.
+    out = render_jinn_splash(
+        _healthy_state(
+            network="mainnet", network_label="mainnet", update_available=True
+        ),
+        truecolor=True,
+    )
+    assert out.count(_TC["gold"]) == 2, _plain(out)
+    assert out.count(_TC["amber"]) == 1
 
 
 def test_update_available_renders_version_amber_with_annotation():

@@ -91,8 +91,9 @@ HERMES_CADUCEUS = """[#CD7F32]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⡀⠀⣀⣀�
 #
 # An instant one-paint greeting for the jinn-agent fork: the Vessel sigil
 # (circle · inscribed triangle · horizon · centre point), a lower-case
-# ``jinn`` wordmark under a gold rule, the version, and four live status
-# lines (network, corpus, contribution, node). Design artifact:
+# ``jinn`` wordmark under a gold rule, the version, and live status lines
+# (network, corpus, contribution; node is render-supported but omitted by the
+# fork — it has no local node concept). Design artifact:
 # ``docs/design/artifacts/2026-07-06-corpus-onboarding/1319-terminal-splash.html``.
 #
 # Rendering is pure ANSI (no Rich / prompt_toolkit dependency) so the splash
@@ -100,8 +101,12 @@ HERMES_CADUCEUS = """[#CD7F32]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⡀⠀⣀⣀�
 # truecolor line-art, and a 16-colour ASCII fallback that fits 80x24. The
 # fallback is chosen when ``$COLORTERM`` is unset or ``$COLUMNS`` is narrow.
 #
-# Gold appears exactly twice in the full splash — the sigil centre point and
-# the version — and nowhere else; that scarcity is load-bearing.
+# Gold appears exactly twice on testnet — the sigil centre point and the
+# version — and nowhere else; that scarcity is load-bearing. Mainnet is the
+# one sanctioned exception: the design renders the ``base · mainnet`` network
+# line gold, so mainnet legitimately carries three golds (sigil + version +
+# network line). Update-available drops the version to amber, so it carries
+# two on mainnet, one on testnet. See test_gold_count_on_mainnet_is_three.
 
 # ── ANSI palette ─────────────────────────────────────────────────────────────
 # Truecolor (24-bit) — mirrors the design's --t-* tokens.
@@ -167,10 +172,12 @@ def _thousands(n: int) -> str:
 
 
 def _status_lines(state: Dict[str, object], pal: Dict[str, str]) -> List[str]:
-    """Render the four status lines (network, corpus, contribution, node).
+    """Render the status lines (network, corpus, contribution, node).
 
     Fixed order. Pre-consent (``contribution`` is ``None``/unset) omits the
-    contribution line entirely. Unresolved values render ``checking…`` dim.
+    contribution line entirely; likewise an absent ``node`` key omits the node
+    line (the fork has no node source — see the node block below). Unresolved
+    network/corpus values render ``checking…`` dim.
     """
     rst = _RST
     dim, sky, gold, green, red = (
@@ -214,7 +221,13 @@ def _status_lines(state: Dict[str, object], pal: Dict[str, str]) -> List[str]:
         lines.append(label("contribution") + f"{dim}off{sep}reader only{rst}")
     # else: unset — line omitted.
 
-    # node — running(green) / not running(dim) / checking(dim)
+    # node — running(green) / not running(dim). Omitted entirely when the
+    # key is absent (same rule as the pre-consent contribution line): the
+    # jinn-agent harness has no local node/vessel concept (node operation is
+    # the separate mono client daemon), so an unresolved node line would show
+    # ``checking…`` forever and can never resolve — misleading. The fork's
+    # gather_splash_state never sets ``node``, so the fork never renders this
+    # line; the render path is retained for callers that do have a node source.
     node = state.get("node")
     if node == "running":
         vessel = state.get("node_vessel")
@@ -222,8 +235,7 @@ def _status_lines(state: Dict[str, object], pal: Dict[str, str]) -> List[str]:
         lines.append(label("node") + f"{green}running{tail}{rst}")
     elif node == "not_running":
         lines.append(label("node") + f"{dim}not running{rst}")
-    else:
-        lines.append(label("node") + f"{dim}checking…{rst}")
+    # else: unset/None — line omitted (no perpetual checking… for the fork).
 
     return lines
 
@@ -355,8 +367,13 @@ def gather_splash_state() -> Dict[str, object]:
 
     Degraded (no cheap sync fork source — see the PR data-wiring notes):
       - corpus reachability + count: needs a ``jinn-layer corpus`` call.
+        A real source exists but not synchronously; wiring it is follow-up
+        Jinn-Network/mono#1420, so this stays ``checking…`` for now (not a bug).
       - contribution_count: needs a ``jinn-layer ledger`` call.
-      - node status + vessel: the harness has no local node/vessel concept.
+
+    Omitted (no source at all in the fork — the line is not rendered):
+      - node status + vessel: the harness has no local node/vessel concept
+        (node operation is the separate mono client daemon).
     """
     state: Dict[str, object] = {}
 
@@ -387,7 +404,11 @@ def gather_splash_state() -> Dict[str, object]:
     except Exception:
         pass  # No consent module → treat as pre-consent, omit the line.
 
-    # corpus + node: no cheap synchronous source → left unresolved (checking…).
+    # corpus: no cheap synchronous source yet → left unresolved (checking…).
+    # A real corpus source exists but not synchronously; wiring it (reachability
+    # + envelope count without blocking the paint) is follow-up
+    # Jinn-Network/mono#1420. Until then this line honestly reads checking… —
+    # it is not a bug. node: key never set → line omitted (see _status_lines).
     return state
 
 
