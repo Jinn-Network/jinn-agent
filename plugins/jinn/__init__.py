@@ -311,7 +311,7 @@ def _handle_jinn(command_args: str = "", session_id: str = "", task_id: str = ""
             except json.JSONDecodeError:
                 rows = None
             if rows is not None:
-                return ledger_view.render_ledger(rows)
+                return ledger_view.render_ledger(rows, enabled=consent.capture_enabled())
         code, out = jinn_layer.ledger(runner=_runner)
         return out if code == 0 else f"ledger unavailable:\n{out}"
 

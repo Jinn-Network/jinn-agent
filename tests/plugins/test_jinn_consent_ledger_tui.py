@@ -200,9 +200,36 @@ def test_ledger_counts_summary():
 
 
 def test_ledger_empty_state_exact_copy():
-    plain = _plain(ledger_view.render_ledger([]))
+    plain = _plain(ledger_view.render_ledger([], enabled=True))
     assert "Nothing published yet. Traces appear here after your first task" in plain
     assert "Vetoed and retained-local tasks are listed here too." in plain
+    assert "contribution is ON" in plain
+
+
+def test_ledger_empty_state_declined_is_reader_only():
+    # A declined/unset operator must not be told contribution is ON.
+    plain = _plain(ledger_view.render_ledger([], enabled=False))
+    assert "contribution is OFF · reader only" in plain
+    assert "contribution is ON" not in plain
+    assert "turn on any time: /jinn consent" in plain
+
+
+def test_ledger_strips_terminal_control_chars_from_fields():
+    # A hostile `task` value carrying ESC / CR / newline must not reach the
+    # terminal raw (ANSI injection) or desync the column padding.
+    out = ledger_view.render_ledger([
+        {"time": "05-25 16:47", "task": "evil\x1b[31mRED\r\n\x07", "env": "env-1",
+         "anchor": "0x00…00", "tier": "tests-passed"},
+    ])
+    # The ESC that would open a raw ANSI sequence is stripped; the bracket text
+    # that follows survives as inert literal characters.
+    assert "evil[31mRED" in _plain(out)
+    # CR and BEL (never emitted by styling) are gone from the raw output.
+    assert "\r" not in out and "\x07" not in out
+    # No stray ESC other than the palette's own well-formed codes: every ESC in
+    # the output must be followed by '[' and a valid SGR terminator.
+    stray = re.sub(r"\033\[[0-9;]*m", "", out)
+    assert "\033" not in stray
 
 
 def test_ledger_vow_language_only_in_node_id_chrome():

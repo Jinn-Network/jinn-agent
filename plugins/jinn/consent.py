@@ -90,11 +90,6 @@ KEYS_LINE = "[A] Accept · [D] Decline · [P] Preview a scrubbed envelope · [?]
 WHY_HEADER = "WHY TURN IT ON"
 WHAT_LEAVES_HEADER = "WHAT LEAVES THIS MACHINE"
 
-DOCS_BODY = (
-    "Full detail on what is published, how scrubbing works, and how to audit "
-    "the corpus: docs.jinn.network/harness — consent, scrubbing, and the corpus."
-)
-
 # Current-state line shown above the pitch, so /jinn consent always tells the
 # operator where they stand before re-pitching (mono#1384).
 STATE_LINES = {
@@ -235,18 +230,20 @@ def run_consent_flow(
             print_fn(render_docs_styled())
             continue
         if choice == "a":
-            confirm = input_fn(CONFIRM_ACCEPT + "\n> ").strip().lower()
+            print_fn(render_confirm_styled(accept=True))
+            confirm = input_fn("> ").strip().lower()
             if confirm == "y":
                 save_state(ACCEPTED)
-                print_fn(RECORDED_ON)
+                print_fn(render_recorded_styled(on=True))
                 break
             continue
         # Bare Enter, 'd', or anything unrecognised routes to decline —
         # but decline still takes one deliberate confirmation.
-        confirm = input_fn(CONFIRM_DECLINE + "\n> ").strip().lower()
+        print_fn(render_confirm_styled(accept=False))
+        confirm = input_fn("> ").strip().lower()
         if confirm == "y":
             save_state(DECLINED)
-            print_fn(RECORDED_OFF)
+            print_fn(render_recorded_styled(on=False))
             break
 
     status = str(load_state().get("status"))

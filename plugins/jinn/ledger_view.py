@@ -18,9 +18,20 @@ layer yields JSON, and degrades to the layer's raw text otherwise.
 
 from __future__ import annotations
 
+import re
 from typing import Dict, List, Optional, Sequence
 
 from . import style as _style
+
+# Strip C0/C1 control chars (incl. ESC, CR, LF, DEL) from any layer-supplied
+# field before it reaches the terminal: a value carrying \x1b/\r/newline would
+# otherwise pass raw ANSI to the terminal and desync the len()-based column
+# padding. Defence-in-depth — the corpus is public and rows may be cross-operator.
+_CTRL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
+def _sanitise(s: str) -> str:
+    return _CTRL.sub("", s)
 
 # Column widths (chars) — design COL.
 _COL = {"time": 12, "task": 32, "env": 11, "anchor": 12}
@@ -39,11 +50,10 @@ EMPTY_LINES = (
 
 VETOED_LABEL = "vetoed (local only)"
 FAILED_LABEL = "publish failed — retained locally"
-RETAINED_SUBLINE = "kept on this machine · anchor not written · [r] retry   [v] veto instead"
 
 
 def _cell(text: Optional[str], w: int, align_right: bool = False) -> str:
-    s = "" if text is None else str(text)
+    s = "" if text is None else _sanitise(str(text))
     if len(s) > w:
         s = s[: w - 1] + "…"
     return s.rjust(w) if align_right else s.ljust(w)
@@ -81,7 +91,7 @@ def _row(pal, rst: str, r: Dict[str, object]) -> str:
         )
         return main + "\n" + sub
 
-    tier = str(r.get("tier") or "")
+    tier = _sanitise(str(r.get("tier") or ""))
     tier_cls = _TIER_CLS.get(tier, "dim")
     env = sky(_cell(r.get("env"), _COL["env"]))
     anc = dim(_cell(r.get("anchor"), _COL["anchor"]))
@@ -103,30 +113,44 @@ def _header(pal, rst: str) -> str:
     )
 
 
-def render_empty(node_id: str = "vessel-0x91be…44a2") -> str:
+def render_empty(node_id: str = "vessel-0x91be…44a2", enabled: bool = True) -> str:
     pal, rst = _style.palette()
     dim = lambda s: _style.wrap(pal, rst, "dim", s)
     fg = lambda s: _style.wrap(pal, rst, "fg", s)
     sky = lambda s: _style.wrap(pal, rst, "sky", s)
     green = lambda s: _style.wrap(pal, rst, "green", s)
+    if enabled:
+        status = dim("contribution is ") + green("ON") + dim("  ·  run a task to begin.")
+    else:
+        status = (
+            dim("contribution is ")
+            + fg("OFF · reader only")
+            + dim("  ·  turn on any time: /jinn consent")
+        )
     return "\n".join([
         "  " + fg("contribution ledger") + dim("  ·  ") + sky(node_id),
         "",
         dim("  Nothing published yet. Traces appear here after your first task"),
         dim("  publishes. Vetoed and retained-local tasks are listed here too."),
         "",
-        "  " + dim("contribution is ") + green("ON") + dim("  ·  run a task to begin."),
+        "  " + status,
     ])
 
 
-def render_ledger(rows: Sequence[Dict[str, object]], node_id: str = "vessel-0x91be…44a2") -> str:
+def render_ledger(
+    rows: Sequence[Dict[str, object]],
+    node_id: str = "vessel-0x91be…44a2",
+    enabled: bool = True,
+) -> str:
     """Render the populated ledger (design 1b). Empty ``rows`` → empty state.
 
     ``vessel-…`` in the node id is the *only* vow-language on the surface, and
     only in neutral chrome — every consent/veto/failure line stays plain.
+    ``enabled`` is the real consent state, threaded only to the empty state so
+    a declined/unset operator is not told contribution is ON.
     """
     if not rows:
-        return render_empty(node_id)
+        return render_empty(node_id, enabled=enabled)
 
     pal, rst = _style.palette()
     dim = lambda s: _style.wrap(pal, rst, "dim", s)
