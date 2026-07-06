@@ -85,6 +85,318 @@ HERMES_CADUCEUS = """[#CD7F32]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⡀⠀⣀⣀�
 [#B8860B]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]"""
 
 
+# =========================================================================
+# Jinn terminal splash (Jinn-Network/mono#1417)
+# =========================================================================
+#
+# An instant one-paint greeting for the jinn-agent fork: the Vessel sigil
+# (circle · inscribed triangle · horizon · centre point), a lower-case
+# ``jinn`` wordmark under a gold rule, the version, and four live status
+# lines (network, corpus, contribution, node). Design artifact:
+# ``docs/design/artifacts/2026-07-06-corpus-onboarding/1319-terminal-splash.html``.
+#
+# Rendering is pure ANSI (no Rich / prompt_toolkit dependency) so the splash
+# is cheap on the startup path and trivially snapshot-testable. Two variants:
+# truecolor line-art, and a 16-colour ASCII fallback that fits 80x24. The
+# fallback is chosen when ``$COLORTERM`` is unset or ``$COLUMNS`` is narrow.
+#
+# Gold appears exactly twice in the full splash — the sigil centre point and
+# the version — and nowhere else; that scarcity is load-bearing.
+
+# ── ANSI palette ─────────────────────────────────────────────────────────────
+# Truecolor (24-bit) — mirrors the design's --t-* tokens.
+_TC = {
+    "sky": "\033[38;2;122;167;220m",     # #7aa7dc — structure
+    "gold": "\033[38;2;220;184;102m",    # #dcb866 — single accent
+    "dim": "\033[38;2;107;123;149m",     # #6b7b95 — secondary / labels / off
+    "green": "\033[38;2;123;176;162m",   # #7bb0a2 — ok / on / running
+    "amber": "\033[38;2;207;154;63m",    # #cf9a3f — warn / degraded
+    "red": "\033[38;2;192;112;112m",     # #c07070 — error / unreachable
+    "fg": "\033[38;2;214;224;240m",      # #d6e0f0 — bone default text
+}
+# 16-colour fallback (basic xterm) — mirrors the design's --c-* tokens.
+_FB = {
+    "sky": "\033[36m",       # cyan — structure
+    "gold": "\033[93m",      # bright yellow — accent
+    "dim": "\033[90m",       # bright black (grey) — secondary / off
+    "green": "\033[32m",     # green — ok
+    "amber": "\033[33m",     # yellow — warn
+    "red": "\033[31m",       # red — error
+    "fg": "\033[97m",        # bright white — default text
+}
+
+
+def _splash_palette(truecolor: bool) -> Dict[str, str]:
+    return _TC if truecolor else _FB
+
+
+def supports_truecolor(columns: Optional[int] = None) -> bool:
+    """Decide the splash variant: truecolor line-art vs 16-colour ASCII.
+
+    Truecolor is used only when the terminal advertises it (``$COLORTERM`` is
+    ``truecolor`` / ``24bit``) AND there is room for the line-art sigil
+    (>= 96 columns — the design's real minimum; the artifact's ``< 100``
+    threshold was a placeholder left to this probe). ``NO_COLOR`` forces the
+    fallback. Any of these unmet → the ASCII fallback that fits 80x24.
+    """
+    if os.environ.get("NO_COLOR"):
+        return False
+    colorterm = (os.environ.get("COLORTERM") or "").strip().lower()
+    if colorterm not in ("truecolor", "24bit"):
+        return False
+    if columns is None:
+        env_cols = os.environ.get("COLUMNS")
+        if env_cols and env_cols.isdigit():
+            columns = int(env_cols)
+        else:
+            try:
+                columns = shutil.get_terminal_size().columns
+            except Exception:
+                columns = 80
+    return columns >= 96
+
+
+# ── Status-line copy (design 3.3, exact) ─────────────────────────────────────
+# A splash state is a plain dict describing what to render. Callers pass real
+# values; anything not synchronously known is ``None`` and renders ``checking…``.
+_LABEL_W = 15  # fixed-width, lower-case, dim label column
+
+
+def _thousands(n: int) -> str:
+    return f"{n:,}"
+
+
+def _status_lines(state: Dict[str, object], pal: Dict[str, str]) -> List[str]:
+    """Render the four status lines (network, corpus, contribution, node).
+
+    Fixed order. Pre-consent (``contribution`` is ``None``/unset) omits the
+    contribution line entirely. Unresolved values render ``checking…`` dim.
+    """
+    rst = _RST
+    dim, sky, gold, green, red = (
+        pal["dim"], pal["sky"], pal["gold"], pal["green"], pal["red"]
+    )
+    sep = " · " if pal is _TC else " * "  # ASCII fallback avoids the middot
+
+    def label(text: str) -> str:
+        return f"{dim}{text.ljust(_LABEL_W)}{rst}"
+
+    lines: List[str] = []
+
+    # network — sky on testnet, gold on mainnet (the only other gold, on
+    # mainnet only; on testnet gold stays reserved for sigil + version).
+    net = state.get("network")
+    if net == "mainnet":
+        lines.append(label("network") + f"{gold}base{sep}mainnet{rst}")
+    elif net == "testnet":
+        lines.append(label("network") + f"{sky}base-sepolia{sep}testnet{rst}")
+    else:
+        lines.append(label("network") + f"{dim}checking…{rst}")
+
+    # corpus — connected(green) / unreachable(red) / checking(dim)
+    corpus = state.get("corpus")
+    if corpus == "connected":
+        count = state.get("corpus_count")
+        tail = f"{sep}{_thousands(int(count))} envelopes" if isinstance(count, int) else ""
+        lines.append(label("corpus") + f"{green}connected{tail}{rst}")
+    elif corpus == "unreachable":
+        lines.append(label("corpus") + f"{red}unreachable — retrying{rst}")
+    else:
+        lines.append(label("corpus") + f"{dim}checking…{rst}")
+
+    # contribution — omitted entirely pre-consent (state == None / 'unset').
+    contrib = state.get("contribution")
+    if contrib == "on":
+        count = state.get("contribution_count")
+        tail = f"{_thousands(int(count))} traces published" if isinstance(count, int) else "traces published"
+        lines.append(label("contribution") + f"{green}on{sep}{tail}{rst}")
+    elif contrib == "off":
+        lines.append(label("contribution") + f"{dim}off{sep}reader only{rst}")
+    # else: unset — line omitted.
+
+    # node — running(green) / not running(dim) / checking(dim)
+    node = state.get("node")
+    if node == "running":
+        vessel = state.get("node_vessel")
+        tail = f"{sep}{vessel}" if vessel else ""
+        lines.append(label("node") + f"{green}running{tail}{rst}")
+    elif node == "not_running":
+        lines.append(label("node") + f"{dim}not running{rst}")
+    else:
+        lines.append(label("node") + f"{dim}checking…{rst}")
+
+    return lines
+
+
+# ── Sigil art (transcribed from the design's rendered output) ────────────────
+# Truecolor line-art: circle · inscribed upward triangle · horizon · centre.
+# Whole rows are colour-wrapped so alignment cannot drift; only the horizon
+# row is split to place the single gold centre point.
+def _line_sigil(pal: Dict[str, str]) -> List[str]:
+    sky, gold, rst = pal["sky"], pal["gold"], _RST
+    s = lambda t: f"{sky}{t}{rst}"
+    return [
+        s("           ╭───────────────╮"),
+        s("        ╭──╯       ╱╲        ╰──╮"),
+        s("      ╭─╯        ╱    ╲         ╰─╮"),
+        s("     ╱         ╱        ╲          ╲"),
+        s("    │        ╱            ╲         │"),
+        s("    │       ╱              ╲        │"),
+        f"{sky}  ──┼──────╱────────{rst}{gold}•{rst}{sky}───────╲───────┼──{rst}",
+        s("    │     ╱                  ╲       │"),
+        s("    │    ╱____________________╲      │"),
+        s("     ╲                              ╱"),
+        s("      ╰─╮                        ╭─╯"),
+        s("        ╰──╮                  ╭──╯"),
+        s("           ╰────────────────╯"),
+    ]
+
+
+# 16-colour ASCII fallback sigil (no box-drawing, no braille) — fits 80x24.
+def _fallback_sigil(pal: Dict[str, str]) -> List[str]:
+    c, gold, rst = pal["sky"], pal["gold"], _RST
+    s = lambda t: f"{c}{t}{rst}"
+    return [
+        s("            .-\"\"\"\"\"\"\"-."),
+        s("         .'      /\\      '."),
+        s("        /      /  \\      \\"),
+        s("       /      /    \\      \\"),
+        s("      |      /      \\      |"),
+        f"{c}  +---|-----/---{rst}{gold}*{rst}{c}---\\-----|---+{rst}",
+        s("      |    /          \\    |"),
+        s("       \\  /____________\\  /"),
+        s("        \\                /"),
+        s("         '.            .'"),
+        s("           '-.________.-'"),
+    ]
+
+
+def render_jinn_splash(
+    state: Dict[str, object],
+    *,
+    truecolor: bool = True,
+    columns: Optional[int] = None,
+) -> str:
+    """Render the full splash to an ANSI string — pure, one paint, no I/O.
+
+    ``state`` keys (all optional; missing → ``checking…`` or omitted):
+      network: 'testnet' | 'mainnet'
+      corpus: 'connected' | 'unreachable'   corpus_count: int
+      contribution: 'on' | 'off'            contribution_count: int
+      node: 'running' | 'not_running'       node_vessel: str
+      version: 'v0.4.2'  network_label: 'testnet'  update_available: bool
+    """
+    pal = _splash_palette(truecolor)
+    dim, gold, sky, amber, rst = (
+        pal["dim"], pal["gold"], pal["sky"], pal["amber"], _RST
+    )
+    sep = " · " if truecolor else " * "
+
+    sigil = _line_sigil(pal) if truecolor else _fallback_sigil(pal)
+    indent = "     " if truecolor else "    "
+
+    # Wordmark block — lower-case mono ``jinn``, gold rule, tagline, version.
+    version = str(state.get("version") or "")
+    net_label = str(state.get("network_label") or "testnet")
+    ver_str = f"harness {version}" if version else "harness"
+    if state.get("update_available"):
+        # Out-of-date build: version renders amber with the annotation.
+        ver_line = f"{amber}{ver_str}{sep}{net_label}{sep}update available{rst}"
+    else:
+        ver_line = f"{gold}{ver_str}{rst}{dim}{sep}{rst}{sky}{net_label}{rst}"
+
+    if truecolor:
+        # The wordmark rule is dim, NOT gold: gold is reserved to exactly two
+        # marks — the sigil centre point and the version (issue #1417 AC).
+        # The design artifact renders this rule gold; the AC's "gold appears
+        # exactly twice" is the binding contract, so the rule stays dim.
+        wordmark = [
+            "",
+            f"              {_BOLD}{pal['fg']}j i n n{rst}",
+            f"           {dim}──────────────────{rst}",
+            f"     {dim}an open agentic knowledge economy{rst}",
+            f"           {ver_line}",
+        ]
+        ether = f"{dim}────────────────────  the ether  ────────────────────{rst}"
+    else:
+        wordmark = [
+            "",
+            f"        {_BOLD}{pal['fg']}j i n n{rst}   {dim}an open agentic knowledge economy{rst}",
+            f"        {ver_line}",
+        ]
+        ether = f"{dim}----------------------  the ether  ----------------------{rst}"
+
+    status = _status_lines(state, pal)
+
+    out: List[str] = []
+    out.extend(sigil)
+    out.extend(wordmark)
+    out.append("")
+    out.append(indent + ether)
+    out.append("")
+    out.extend(indent + line for line in status)
+    return "\n".join(out)
+
+
+def gather_splash_state() -> Dict[str, object]:
+    """Collect a synchronous best-effort snapshot for the splash.
+
+    Instant-paint discipline: only values cheaply known without a network
+    call are read live; anything needing a subprocess or RPC round-trip is
+    left unresolved (``checking…``) rather than blocking the greeting.
+
+    Wired to real fork data:
+      - version / update_available: the same VERSION + update check the
+        Rich banner uses.
+      - network / network_label: ``$JINN_NETWORK`` (default ``testnet`` —
+        the fork's only sync network source; there is no chain config).
+      - contribution: real consent state — ``unset`` omits the line,
+        ``accepted`` → on, ``declined`` → off.
+
+    Degraded (no cheap sync fork source — see the PR data-wiring notes):
+      - corpus reachability + count: needs a ``jinn-layer corpus`` call.
+      - contribution_count: needs a ``jinn-layer ledger`` call.
+      - node status + vessel: the harness has no local node/vessel concept.
+    """
+    state: Dict[str, object] = {}
+
+    state["version"] = f"v{VERSION}"
+
+    net = (os.environ.get("JINN_NETWORK") or "testnet").strip().lower()
+    if net not in ("testnet", "mainnet"):
+        net = "testnet"
+    state["network"] = net
+    state["network_label"] = net
+
+    # Update check — reuse the prefetched result if it's ready; never block.
+    try:
+        behind = get_update_result(timeout=0.0)
+        state["update_available"] = bool(behind is not None and behind != 0)
+    except Exception:
+        state["update_available"] = False
+
+    # Consent — synchronous, real. Drives the contribution line's presence.
+    try:
+        from plugins.jinn import consent as _consent
+        status = str(_consent.load_state().get("status", _consent.UNSET))
+        if status == _consent.ACCEPTED:
+            state["contribution"] = "on"  # count stays unresolved (ledger call)
+        elif status == _consent.DECLINED:
+            state["contribution"] = "off"
+        # UNSET → key absent → contribution line omitted (pre-consent).
+    except Exception:
+        pass  # No consent module → treat as pre-consent, omit the line.
+
+    # corpus + node: no cheap synchronous source → left unresolved (checking…).
+    return state
+
+
+def print_jinn_splash(force_fallback: bool = False) -> None:
+    """Print the jinn splash to stdout in one paint (raw ANSI, no Rich)."""
+    truecolor = (not force_fallback) and supports_truecolor()
+    text = render_jinn_splash(gather_splash_state(), truecolor=truecolor)
+    print(text)
+
 
 # =========================================================================
 # Skills scanning

@@ -3456,6 +3456,21 @@ HERMES_CADUCEUS = """[#CD7F32]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⡀⠀⣀⣀�
 
 
 
+def _jinn_splash_active() -> bool:
+    """True when the jinn skin is active — gates the fork terminal splash.
+
+    Skin-gated (Jinn-Network/mono#1417) so the instant one-paint greeting
+    replaces the upstream banner only for jinn-agent users; every other skin
+    keeps upstream behaviour. Never raises — any skin-engine error → False,
+    which falls back to the upstream banner.
+    """
+    try:
+        from hermes_cli.skin_engine import get_active_skin
+        return getattr(get_active_skin(), "name", "default") == "jinn"
+    except Exception:
+        return False
+
+
 def _build_compact_banner() -> str:
     """Build a compact banner that fits the current terminal width."""
     try:
@@ -6118,12 +6133,30 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin):
         if hasattr(self, 'agent') and self.agent and hasattr(self.agent, 'context_compressor'):
             ctx_len = self.agent.context_compressor.context_length
         
+        # jinn-agent fork splash (Jinn-Network/mono#1417). When the jinn skin
+        # is active this replaces the upstream Rich banner with the instant
+        # one-paint greeting (sigil + wordmark + version + live status lines).
+        # Skin-gated so every other skin keeps upstream behaviour unchanged —
+        # thin-fork discipline. The downstream context/model warnings below
+        # still run; only the banner render is swapped. Never block startup on
+        # a splash failure — fall through to the upstream banner on any error.
+        _jinn_splash_done = False
+        if _jinn_splash_active():
+            try:
+                from hermes_cli.banner import print_jinn_splash
+                print_jinn_splash()
+                _jinn_splash_done = True
+            except Exception:
+                pass  # fall through to the upstream banner
+
         # Auto-compact for narrow terminals — the full banner with caduceus
         # + tool list needs ~80 columns minimum to render without wrapping.
         term_width = shutil.get_terminal_size().columns
         use_compact = self.compact or term_width < 80
-        
-        if use_compact:
+
+        if _jinn_splash_done:
+            pass  # splash already painted; skip the upstream banner render
+        elif use_compact:
             self._console_print(_build_compact_banner())
             self._show_status()
         else:
