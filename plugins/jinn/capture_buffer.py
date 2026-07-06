@@ -24,7 +24,12 @@ HARNESS_VERSION = "0.1.0"
 
 
 def _key(task_id: str, session_id: str) -> str:
-    return task_id or session_id or "default"
+    # Key on the session, which is stable for the whole conversation. task_id is
+    # a fresh per-turn uuid on the interactive path (the agent mints one when no
+    # explicit task is set), so keying on it fragments a session's trace across
+    # buffers — record_first_turn lands in one, the tool steps + assemble in
+    # another, and the published envelope loses its summary/model (mono #1404).
+    return session_id or task_id or "default"
 
 
 def _now_nano() -> str:
@@ -50,7 +55,12 @@ def record_first_turn(
                 "tools": set(),
             },
         )
-        buf.setdefault("summary", (user_message or "").strip().splitlines()[0][:500] or "(no summary)")
+        # Guard an empty/whitespace first message: "".splitlines()[0] raises
+        # IndexError, which — swallowed by the hook dispatcher — would skip the
+        # model write below and strand the trace without metadata (mono #1404).
+        lines = (user_message or "").strip().splitlines()
+        if lines and lines[0].strip():
+            buf.setdefault("summary", lines[0][:500])
         buf["model"] = model or buf.get("model", "")
         buf["platform"] = platform or buf.get("platform", "")
 

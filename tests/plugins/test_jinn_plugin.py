@@ -125,6 +125,39 @@ def test_accepted_and_previewed_publishes(isolated_home, tmp_path):
     assert _pending_files(tmp_path) == []
 
 
+def test_summary_and_model_captured_when_not_flagged_first_turn(isolated_home, tmp_path):
+    """mono #1404: capture must not hinge solely on is_first_turn.
+
+    On the Nous/OpenAI-compat path a completed session published with
+    summary "(no summary)" / model "unknown". record_first_turn must run
+    regardless of the is_first_turn flag so the trace keeps its metadata.
+    """
+    consent.save_state(consent.ACCEPTED)
+    jinn._on_pre_llm_call(
+        session_id="s1",
+        task_id="t1",
+        user_message="Search the web for X",
+        is_first_turn=False,  # the failing path
+        model="step-3.7-flash",
+        platform="cli",
+    )
+    jinn._on_post_tool_call(
+        tool_name="terminal",
+        args={"command": "ls"},
+        session_id="s1",
+        task_id="t1",
+        tool_call_id="c1",
+        result='{"output": "ok"}',
+        duration_ms=10,
+    )
+    jinn._on_session_end(session_id="s1", task_id="t1", completed=True, interrupted=False)
+    files = _pending_files(tmp_path)
+    assert len(files) == 1
+    task = json.loads(files[0].read_text())
+    assert task["task"]["summary"] == "Search the web for X"
+    assert task["environment"]["model"] == "step-3.7-flash"
+
+
 def test_veto_records_locally_and_never_publishes_content(isolated_home, tmp_path):
     consent.save_state(consent.ACCEPTED, previewed=True)
     # Veto is issued mid-session, once the task under capture has steps.
