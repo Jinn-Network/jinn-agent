@@ -382,6 +382,45 @@ def test_corpus_command_delegates_to_layer(isolated_home):
     assert isolated_home.calls[0][1:4] == ["corpus", "search", "prediction"]
 
 
+# ── Ledger: structured render vs degrade (mono#1418) ─────────────────────────
+
+def test_ledger_renders_structured_rows_from_json(isolated_home):
+    # `jinn-layer ledger --json` yields rows → the design 1b table.
+    rows = [
+        {"time": "05-26 06:41", "task": "fix retry", "envelope": "env-8f21c2",
+         "anchor": "0x7a2f…c019", "tier": "tests-passed"},
+        {"time": "05-25 22:41", "task": "refactor auth", "state": "vetoed"},
+    ]
+    isolated_home.out = json.dumps(rows)
+    out = jinn._handle_jinn(command_args="ledger")
+    assert isolated_home.calls[0][1:3] == ["ledger", "--json"]
+    assert "TIER" in out
+    assert "tests-passed" in out
+    assert "vetoed (local only)" in out
+
+
+def test_ledger_degrades_to_raw_text_when_json_unavailable(isolated_home):
+    # A layer that predates `--json`: the JSON call succeeds but is not JSON,
+    # so the fork degrades to the plain `ledger` text pass-through.
+    isolated_home.out = "PLAIN LEDGER TEXT (no --json support)"
+    out = jinn._handle_jinn(command_args="ledger")
+    assert out == "PLAIN LEDGER TEXT (no --json support)"
+    # Both the --json probe and the plain ledger were attempted.
+    assert ["ledger", "--json"] in [c[1:3] for c in isolated_home.calls]
+    assert any(c[1:] == ["ledger"] for c in isolated_home.calls)
+
+
+def test_preview_with_no_pending_shows_example_fixture(isolated_home):
+    # Design requirement iv: preview is reachable before any publish. With no
+    # task yet, /jinn preview shows the labelled example fixture.
+    consent.save_state(consent.ACCEPTED)
+    out = jinn._handle_jinn(command_args="preview")
+    assert "example — no task run yet" in out
+    assert "NOTHING IS SENT FROM THIS SCREEN" in out
+    # It must NOT mark previewed (the real gate stays on a real trace).
+    assert consent.load_state()["previewed"] is False
+
+
 # ── TUI-safe consent commands (no blocking reads) ────────────────────────────
 
 def test_slash_consent_shows_explainer_with_command_keys(isolated_home):

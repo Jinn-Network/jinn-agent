@@ -86,6 +86,15 @@ NODE_STUB_LATER = (
 
 KEYS_LINE = "[A] Accept · [D] Decline · [P] Preview a scrubbed envelope · [?] Docs"
 
+# Section headers (design 1a): benefits first, then the safety mechanics.
+WHY_HEADER = "WHY TURN IT ON"
+WHAT_LEAVES_HEADER = "WHAT LEAVES THIS MACHINE"
+
+DOCS_BODY = (
+    "Full detail on what is published, how scrubbing works, and how to audit "
+    "the corpus: docs.jinn.network/harness — consent, scrubbing, and the corpus."
+)
+
 # Current-state line shown above the pitch, so /jinn consent always tells the
 # operator where they stand before re-pitching (mono#1384).
 STATE_LINES = {
@@ -155,11 +164,17 @@ def state_line() -> str:
 
 
 def render_explainer(keys_line: str = KEYS_LINE) -> str:
-    lines = [state_line(), "", OPENING, ""]
-    lines += [f"  {s}" for s in WHY]
+    """Plain-text explainer (NO_COLOR / tests / blocking-terminal path).
+
+    Leads with the three benefits (design ``WHY TURN IT ON``) then the safety
+    mechanics (``WHAT LEAVES THIS MACHINE``). The styled TUI variant is
+    ``render_explainer_styled``; both carry identical visible text.
+    """
+    lines = [state_line(), "", OPENING, "", f"{WHY_HEADER}:"]
+    lines += [f"  · {s}" for s in WHY]
     lines.append("")
-    lines.append("What leaves this machine:")
-    lines += [f"  {s}" for s in WHAT_LEAVES]
+    lines.append(f"{WHAT_LEAVES_HEADER}:")
+    lines += [f"  · {s}" for s in WHAT_LEAVES]
     lines.append("")
     lines.append(DECLINE_LINE)
     lines.append("")
@@ -203,15 +218,21 @@ def run_consent_flow(
     ``idle -> confirming -> recorded``. Bare Enter defaults to decline —
     the safe default never publishes.
     """
-    print_fn(render_explainer())
+    print_fn(render_explainer_styled())
     while True:
         choice = input_fn("> ").strip().lower()
-        if choice == "p" and preview_fn is not None:
-            preview_fn()
+        if choice == "p":
+            # Preview is reachable before any publish. A real scrubbed
+            # envelope when preview_fn is wired; otherwise the labelled
+            # example fixture (design requirement iv — fresh machine).
+            if preview_fn is not None:
+                preview_fn()
+            else:
+                print_fn(render_preview_example())
             print_fn("[A] Accept · [B] Back")
             continue
         if choice == "?":
-            print_fn("Docs: docs.jinn.network/harness — consent, scrubbing, and the corpus.")
+            print_fn(render_docs_styled())
             continue
         if choice == "a":
             confirm = input_fn(CONFIRM_ACCEPT + "\n> ").strip().lower()
@@ -229,7 +250,209 @@ def run_consent_flow(
             break
 
     status = str(load_state().get("status"))
-    node = input_fn(NODE_STUB + "\n> ").strip().lower()
+    print_fn(render_node_stub_styled())
+    node = input_fn("> ").strip().lower()
     if node == "l":
         print_fn(NODE_STUB_LATER)
     return status
+
+
+# ── Styled renderers (design 1a) — reuse the #1417 splash palette ─────────────
+#
+# Pure ANSI strings, snapshot-testable, NO_COLOR-safe (style.palette yields
+# empty codes). Each carries the same visible text as its plain constant, so
+# both surfaces stay in copy-lockstep. The sigil header matches the splash's
+# softened-brutalist chrome.
+
+from . import style as _style  # noqa: E402  (kept local to the render section)
+
+
+def _sigil_head(pal, rst: str) -> str:
+    return (
+        _style.wrap(pal, rst, "sky", "◇")
+        + " "
+        + _style.wrap(pal, rst, "fg", "jinn-agent")
+        + _style.wrap(pal, rst, "dim", "  ·  first run  ·  fork of hermes-agent")
+    )
+
+
+def _rule(pal, rst: str, n: int = 66) -> str:
+    return _style.wrap(pal, rst, "dim", "─" * n)
+
+
+def render_explainer_styled(keys_line: str = KEYS_LINE) -> str:
+    """The design 1a explainer, styled. Benefits (why) then safety (what
+    leaves the machine), with the plain-language guarantees. Default decline."""
+    pal, rst = _style.palette()
+    dim = lambda s: _style.wrap(pal, rst, "dim", s)
+    fg = lambda s: _style.wrap(pal, rst, "fg", s)
+    sky = lambda s: _style.wrap(pal, rst, "sky", s)
+    gold = lambda s: _style.wrap(pal, rst, "gold", s)
+    amber = lambda s: _style.wrap(pal, rst, "amber", s)
+    kbd = lambda s: _style.wrap(pal, rst, "gold", s)
+
+    out = [
+        _sigil_head(pal, rst),
+        "",
+        fg("  Contribute to the open corpus?"),
+        "",
+        dim("  " + OPENING),
+        "",
+        sky("  " + WHY_HEADER),
+    ]
+    out += [dim("  · ") + fg(s.split(" — ")[0]) + dim(" — " + s.split(" — ", 1)[1] if " — " in s else s) for s in WHY]
+    out += [
+        "",
+        sky("  " + WHAT_LEAVES_HEADER),
+    ]
+    out += [dim("  · " + s) for s in WHAT_LEAVES]
+    out += [
+        "",
+        dim("  " + DECLINE_LINE),
+        "",
+        _rule(pal, rst),
+        "  " + kbd("[A]") + fg(" Accept & contribute") + "      " + kbd("[P]") + fg(" Preview a real payload"),
+        "  " + kbd("[D]") + dim(" Decline · read only") + "      " + kbd("[?]") + dim(" Docs"),
+        "",
+        dim("  consent: ") + amber(str(load_state().get("status", UNSET))) + dim("   ·   default is decline"),
+    ]
+    return "\n".join(out)
+
+
+def render_docs_styled() -> str:
+    pal, rst = _style.palette()
+    dim = lambda s: _style.wrap(pal, rst, "dim", s)
+    sky = lambda s: _style.wrap(pal, rst, "sky", s)
+    gold = lambda s: _style.wrap(pal, rst, "gold", s)
+    amber = lambda s: _style.wrap(pal, rst, "amber", s)
+    return "\n".join([
+        _sigil_head(pal, rst),
+        "",
+        gold("  DOCS"),
+        dim("  Full detail on what is published, how scrubbing works, and how to"),
+        dim("  audit the corpus:"),
+        "",
+        "  " + sky("docs.jinn.network/harness") + dim("   — consent, scrubbing, and the corpus"),
+        "",
+        dim("  Nothing has been decided. Consent is still ") + amber("unset") + dim("."),
+    ])
+
+
+def render_confirm_styled(accept: bool) -> str:
+    pal, rst = _style.palette()
+    dim = lambda s: _style.wrap(pal, rst, "dim", s)
+    fg = lambda s: _style.wrap(pal, rst, "fg", s)
+    gold = lambda s: _style.wrap(pal, rst, "gold", s)
+    amber = lambda s: _style.wrap(pal, rst, "amber", s)
+    kbd = lambda s: _style.wrap(pal, rst, "gold", s)
+    if accept:
+        body = [
+            fg("  Turn on contribution?"),
+            "",
+            dim("  Every task this harness runs will be scrubbed and published to the"),
+            dim("  public corpus. You can veto any task and turn this off any time."),
+            "",
+            "  " + kbd("[Y]") + fg(" Yes, turn on contribution") + "     " + kbd("[N]") + dim(" No, go back"),
+        ]
+    else:
+        body = [
+            fg("  Decline contribution?"),
+            "",
+            dim("  The harness stays fully functional — it will read the corpus and"),
+            dim("  publish nothing. No trace will leave this machine."),
+            "",
+            "  " + kbd("[Y]") + fg(" Yes, decline") + "     " + kbd("[N]") + dim(" No, go back"),
+        ]
+    return "\n".join([
+        _sigil_head(pal, rst), "", gold("  CONFIRM"), "",
+        *body, "",
+        dim("  consent: ") + amber("unset") + dim("  →  action: ") + gold("confirming"),
+    ])
+
+
+def render_recorded_styled(on: bool) -> str:
+    pal, rst = _style.palette()
+    dim = lambda s: _style.wrap(pal, rst, "dim", s)
+    fg = lambda s: _style.wrap(pal, rst, "fg", s)
+    sky = lambda s: _style.wrap(pal, rst, "sky", s)
+    gold = lambda s: _style.wrap(pal, rst, "gold", s)
+    green = lambda s: _style.wrap(pal, rst, "green", s)
+    if on:
+        body = [
+            green("  recorded") + dim(" — contribution is ") + green("ON"),
+            "",
+            dim("  " + RECORDED_ON),
+            "",
+            dim("  Verified traces earn ") + gold("OLAS") + dim(" as the corpus is trained on them."),
+            "",
+            dim("  Manage:  ") + sky("/jinn consent") + dim("  |  ") + sky("/jinn veto") + dim("  |  ") + sky("/jinn ledger"),
+        ]
+    else:
+        body = [
+            sky("  recorded") + dim(" — contribution is ") + fg("OFF · reader only"),
+            "",
+            dim("  " + RECORDED_OFF),
+        ]
+    return "\n".join([_sigil_head(pal, rst), "", *body])
+
+
+def render_node_stub_styled() -> str:
+    pal, rst = _style.palette()
+    dim = lambda s: _style.wrap(pal, rst, "dim", s)
+    fg = lambda s: _style.wrap(pal, rst, "fg", s)
+    gold = lambda s: _style.wrap(pal, rst, "gold", s)
+    kbd = lambda s: _style.wrap(pal, rst, "gold", s)
+    return "\n".join([
+        _sigil_head(pal, rst),
+        "",
+        dim("  One more, optional —"),
+        "",
+        gold("  RUN A NETWORK NODE?"),
+        dim("  Running a node executes tasks for others and earns rewards. It is a"),
+        dim("  separate setup and is not needed to contribute or to read."),
+        "",
+        "  " + kbd("[L]") + fg(" Later — show me the docs") + dim("  (recommended)") + "     " + kbd("[Enter]") + dim(" Skip for now"),
+    ])
+
+
+def render_preview_example() -> str:
+    """A labelled example envelope for a fresh machine with no task run yet
+    (design requirement iv). Real previews go through jinn-layer; this is the
+    fallback so ``P`` is reachable before any task exists. Every field is
+    marked ``example`` so it can never be mistaken for a real trace."""
+    pal, rst = _style.palette()
+    dim = lambda s: _style.wrap(pal, rst, "dim", s)
+    gold = lambda s: _style.wrap(pal, rst, "gold", s)
+    iw = 60
+    bt = lambda title="": _style.box_top(pal, rst, iw, title)
+    bm = lambda title="": _style.box_mid(pal, rst, iw, title)
+    bb = lambda: _style.box_bot(pal, rst, iw)
+    bl = lambda segs: _style.box_line(pal, rst, iw, segs)
+    box = "\n".join([
+        bt("example — no task run yet"),
+        bl([("schema      ", None), ("jinn.trace/v1", "sky")]),
+        bl([("task        ", None), ("(example) fix flaky retry in http client", "fg")]),
+        bl([("harness     ", None), ("jinn-agent", "fg")]),
+        bl([("tier        ", None), ("tests-passed", "green")]),
+        bl([("scrub       ", None), ("12 secrets removed · 3 paths anonymised · ", "dim"), ("ok", "green")]),
+        bm("redacted before send"),
+        bl([("  export OPENAI_API_KEY=", None), ("«redacted:secret»", "amber")]),
+        bl([("  /home/", None), ("«redacted:user»", "amber"), ("/work/http/client.py", None)]),
+        bm("content that ships (scrubbed)"),
+        bl([("  prompt   \"the retry loop drops the 429 backoff…\"", "dim")]),
+        bl([("  diff     +14 −6  http/client.py", "dim")]),
+        bl([("  result   3 tests added · suite green", "dim")]),
+        bb(),
+    ])
+    return "\n".join([
+        _sigil_head(pal, rst),
+        "",
+        gold("  PREVIEW — NOTHING IS SENT FROM THIS SCREEN"),
+        dim("  This is an example envelope: no task has run on this machine yet."),
+        dim("  After your first task, /jinn preview shows the real scrubbed payload"),
+        dim("  that would be published — the whole thing, before anything sends."),
+        "",
+        box,
+        "",
+        dim("  Everything inside the box is what would leave the machine. Nothing else."),
+    ])
