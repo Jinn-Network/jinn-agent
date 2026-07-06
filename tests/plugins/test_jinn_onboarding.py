@@ -136,8 +136,9 @@ def test_step2_rail_consent_done_publish_current():
 def test_step3_none_yet_states_the_honest_trigger():
     plain = _plain(onboarding.render_rewards_none())
     assert "OLAS earned:" in plain and "none yet" in plain
-    # Plain speech on money — design copy verbatim.
-    assert "Publication alone does not pay." in plain
+    # Plain speech on money — protocol-native verb (no pay/paid): publication
+    # alone does not earn; verification triggers it and is not guaranteed.
+    assert "Publication alone does not earn" in plain
     assert "verification" in plain and "it is not guaranteed." in plain
     assert not _EMOJI.search(plain)
 
@@ -190,6 +191,28 @@ def test_corpus_signal_line_format():
     assert f"{_TC['sky']}◇ corpus" in out
     assert f"{_TC['fg']}retry-backoff-patterns" in out
     assert not _EMOJI.search(plain)
+
+
+def test_corpus_signal_line_strips_terminal_control_chars():
+    # The corpus is PUBLIC + cross-operator: a hostile adopted skill/summary/ref
+    # carrying ESC / CR / BEL must not reach a victim operator's terminal raw
+    # (ANSI injection, screen manipulation) on auto-adoption.
+    out = onboarding.render_corpus_signal_line(
+        "evil\x1b[31mSKILL",
+        "pwn\rned\x07",
+        "bafk\x1b[2Jref",
+    )
+    plain = _plain(out)
+    # The ESC that would open a raw ANSI sequence is stripped; the bracket text
+    # that follows survives as inert literal characters.
+    assert "evil[31mSKILL" in plain
+    assert "pwnned" in plain
+    assert "bafk[2Jref" in plain
+    # CR and BEL (never emitted by styling) are gone from the raw output.
+    assert "\r" not in out and "\x07" not in out
+    # No stray ESC other than the palette's own well-formed SGR codes.
+    stray = _ANSI.sub("", out)
+    assert "\033" not in stray
 
 
 def test_corpus_signal_line_hooked_into_pickup(tmp_path, monkeypatch):

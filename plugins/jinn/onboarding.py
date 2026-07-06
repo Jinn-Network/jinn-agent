@@ -343,7 +343,7 @@ def render_first_publish_confirmed(
 
 def render_rewards_none(pal=None, rst=None) -> str:
     """"None yet" + the honest trigger. Plain speech on money (design verbatim):
-    publication alone does not pay; verification triggers it, not guaranteed."""
+    publication alone does not earn; verification triggers it, not guaranteed."""
     if pal is None:
         pal, rst = _style.palette()
     dim = lambda s: _style.wrap(pal, rst, "dim", s)
@@ -357,9 +357,9 @@ def render_rewards_none(pal=None, rst=None) -> str:
         "",
         fg("  OLAS earned: ") + dim("none yet."),
         "",
-        dim("  Publication alone does not pay. OLAS accrues when an evaluator"),
-        dim("  scores one of your published traces under bond — verification"),
-        dim("  triggers it, and it is not guaranteed."),
+        dim("  Publication alone does not earn — verification does. OLAS accrues"),
+        dim("  when an evaluator scores one of your published traces under bond;"),
+        dim("  verification triggers it, and it is not guaranteed."),
         "",
         dim("  Your first trace is published at tier ") + green("tests-passed") + dim(". If an"),
         dim("  evaluator verifies it, the tier moves to ") + gold("evaluator-verified"),
@@ -393,7 +393,7 @@ def render_rewards_earned(amount: str, count: int, pal=None, rst=None) -> str:
         "",
         fg("  OLAS earned: ") + gold(amount) + dim(f" · {verified}."),
         "",
-        dim("  Paid on verification, not publication: an evaluator scored those"),
+        dim("  Accrues on verification, not publication: an evaluator scored those"),
         dim("  traces under bond. Details and per-trace provenance:"),
         "",
         dim("  ") + sky("/jinn rewards") + dim("   ·   each entry links its evaluation and anchor tx."),
@@ -419,9 +419,20 @@ def render_corpus_signal_line(
 
     This is the product-behaviour render hooked into pickup.py's consumption
     path — NOT onboarding-only. Kept here so the format has a single source.
+
+    Every dynamic field (``skill``, ``provenance``, ``env_ref``) is sanitised
+    of C0/C1 control chars at this boundary: the corpus is PUBLIC and
+    cross-operator, so a hostile ``summary``/``slug``/``ref`` carrying
+    ``\\x1b[…]``/``\\r``/CSI bytes would otherwise reach a victim operator's
+    terminal raw on auto-adoption (screen manipulation, output spoofing). We
+    sanitise unconditionally here rather than trusting upstream slug/tier
+    constraints, so every caller is covered.
     """
     if pal is None:
         pal, rst = _style.palette()
+    skill = _style.sanitise(skill)
+    provenance = _style.sanitise(provenance)
+    env_ref = _style.sanitise(env_ref)
     sky = lambda s: _style.wrap(pal, rst, "sky", s)
     skyh = lambda s: _style.wrap(pal, rst, "fg", s)  # bright skill name
     fg = lambda s: _style.wrap(pal, rst, "fg", s)

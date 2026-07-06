@@ -15,6 +15,7 @@ in sky. Softened-brutalist corners (``╭ ╮ ╰ ╯``) match the splash sigil.
 
 from __future__ import annotations
 
+import re
 from typing import List, Optional, Sequence, Tuple
 
 from hermes_cli.banner import _FB, _RST, _TC, supports_truecolor
@@ -27,7 +28,21 @@ __all__ = [
     "box_bot",
     "box_line",
     "no_color",
+    "sanitise",
 ]
+
+
+# Strip C0/C1 control chars (incl. ESC, CR, LF, DEL) from any layer- or
+# corpus-supplied field before it reaches the terminal: a value carrying
+# \x1b/\r/newline would otherwise pass raw ANSI to the terminal (screen
+# manipulation, output spoofing) and desync len()-based column padding.
+# The corpus is PUBLIC and rows may be cross-operator, so every render
+# boundary that interpolates dynamic fields sanitises unconditionally.
+_CTRL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
+def sanitise(s: str) -> str:
+    return _CTRL.sub("", s)
 
 
 def no_color() -> bool:
