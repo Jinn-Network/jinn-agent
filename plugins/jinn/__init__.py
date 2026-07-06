@@ -111,8 +111,11 @@ def _on_pre_llm_call(
     task_id: str = "",
     **_: Any,
 ) -> Optional[Dict[str, str]]:
-    # Contribution side — consent-gated.
-    if consent.capture_enabled() and is_first_turn:
+    # Contribution side — consent-gated. Not gated on is_first_turn: the buffer
+    # is keyed per session and record_first_turn is setdefault-idempotent, so
+    # calling it every turn recovers the summary/model even when the first-turn
+    # signal is unreliable on some provider paths (mono #1404).
+    if consent.capture_enabled():
         buf.record_first_turn(task_id, session_id, user_message, model, platform)
     # Consumption side — NEVER consent-gated: payload-agnostic corpus pickup.
     # Returns {"context": ...} (injected into the user message, cache-safe)
