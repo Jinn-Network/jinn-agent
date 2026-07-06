@@ -26,14 +26,48 @@ from __future__ import annotations
 import json
 import logging
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from . import jinn_layer
+from . import onboarding
 from . import skills_install
 from .consent import get_hermes_home
 
 logger = logging.getLogger(__name__)
+
+# The point-of-use corpus signal (design 1c / #1405 step 4). Emitted once per
+# adopted contribution — the harness is actually *using* another operator's
+# work in this run, so the operator sees a checkable line at that moment. A
+# suggested-but-not-adopted candidate is only injected context (not used), so
+# it never emits a signal. Default sink mirrors _user_line in __init__.py:
+# stderr, which prompt_toolkit proxies above the input area while the TUI runs.
+SignalSink = Callable[[str], None]
+
+
+def _default_signal_sink(line: str) -> None:
+    try:
+        print(line, file=sys.stderr, flush=True)
+    except Exception:
+        pass
+
+
+def _emit_corpus_signal(sink: SignalSink, skill: str, provenance: str, env_ref: str) -> None:
+    """Render + emit one ``◇ corpus`` line. Never raises — a signal must not
+    break a pickup that otherwise succeeded."""
+    try:
+        sink(onboarding.render_corpus_signal_line(skill, provenance, env_ref))
+    except Exception:
+        logger.debug("jinn: corpus signal render failed", exc_info=True)
+
+
+def _short_ref(ref: str) -> str:
+    """Abbreviate a long content ref for the signal line's envelope column."""
+    r = str(ref or "")
+    if len(r) <= 12:
+        return r
+    return f"{r[:5]}…{r[-4:]}"
 
 # Weakest → strongest; mirrors VERIFIABILITY_TIERS in the frozen envelope schema.
 TIER_ORDER = ["user-accepted", "tests-passed", "evaluator-verified"]
@@ -143,19 +177,30 @@ PAYLOAD_ADOPTERS: Dict[str, Callable[[str, Optional[jinn_layer.Runner]], str]] =
 
 # ── The pickup ───────────────────────────────────────────────────────────────
 
-def pickup(user_message: str, runner: Optional[jinn_layer.Runner] = None) -> Optional[Dict[str, str]]:
+def pickup(
+    user_message: str,
+    runner: Optional[jinn_layer.Runner] = None,
+    signal_sink: Optional[SignalSink] = None,
+) -> Optional[Dict[str, str]]:
     """First-turn corpus lookup. Returns ``{"context": ...}`` for the
     pre_llm_call hook (or None when there is nothing worth saying).
     Fails open: any error returns None and the task proceeds untouched.
+
+    ``signal_sink`` receives one ``◇ corpus`` line per adopted contribution
+    (design 1c). Defaults to stderr; tests pass a collector.
     """
     try:
-        return _pickup_inner(user_message, runner or _pickup_runner)
+        return _pickup_inner(user_message, runner or _pickup_runner, signal_sink or _default_signal_sink)
     except Exception as exc:
         logger.warning("jinn: pickup failed open: %s", exc)
         return None
 
 
-def _pickup_inner(user_message: str, runner: jinn_layer.Runner) -> Optional[Dict[str, str]]:
+def _pickup_inner(
+    user_message: str,
+    runner: jinn_layer.Runner,
+    signal_sink: SignalSink,
+) -> Optional[Dict[str, str]]:
     config = load_config()
     if not config.get("enabled", True):
         return None
@@ -211,6 +256,11 @@ def _pickup_inner(user_message: str, runner: jinn_layer.Runner) -> Optional[Dict
                 try:
                     receipt = PAYLOAD_ADOPTERS[payload_type](ref, runner)
                     adopted.append(f"- {slug} ({tier}): {receipt}")
+                    # Point-of-use signal: the harness is now using this
+                    # operator-contributed skill in the run. One line, checkable.
+                    _emit_corpus_signal(
+                        signal_sink, slug, f"{tier} · {summary}", _short_ref(ref)
+                    )
                 except Exception as exc:
                     logger.warning("jinn: auto-adopt of %s failed: %s", ref, exc)
                 continue

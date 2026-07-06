@@ -21,6 +21,12 @@ In-session: `/jinn consent` to decide about contributing (default: decline —
 reader only), `/corpus <query>` to search the network's knowledge,
 `/jinn ledger` for the receipt trail of anything that left your machine.
 
+First run: `jinn-agent onboarding` walks the core loop once, one confirmed
+step at a time — consent → your first publish → rewards → corpus signals.
+It is remembered per machine and never repeats (a returning operator with
+consent recorded and a non-empty ledger sees nothing); `jinn-agent
+onboarding --replay` re-shows all four screens without re-asking consent.
+
 ## Coexists with a stock upstream install
 
 Already running the upstream agent? No conflict:
