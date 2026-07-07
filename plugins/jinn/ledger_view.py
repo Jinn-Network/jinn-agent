@@ -18,20 +18,16 @@ layer yields JSON, and degrades to the layer's raw text otherwise.
 
 from __future__ import annotations
 
-import re
 from typing import Dict, List, Optional, Sequence
 
 from . import style as _style
 
 # Strip C0/C1 control chars (incl. ESC, CR, LF, DEL) from any layer-supplied
-# field before it reaches the terminal: a value carrying \x1b/\r/newline would
-# otherwise pass raw ANSI to the terminal and desync the len()-based column
-# padding. Defence-in-depth — the corpus is public and rows may be cross-operator.
-_CTRL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
-
-
-def _sanitise(s: str) -> str:
-    return _CTRL.sub("", s)
+# field before it reaches the terminal (ANSI injection + column-padding desync).
+# The sanitiser now lives in ``style`` so every render boundary shares one
+# implementation (the #1405 corpus signal line reuses it too); this thin alias
+# preserves the existing callers here.
+_sanitise = _style.sanitise
 
 # Column widths (chars) — design COL.
 _COL = {"time": 12, "task": 32, "env": 11, "anchor": 12}

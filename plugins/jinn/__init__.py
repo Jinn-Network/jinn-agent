@@ -33,6 +33,7 @@ from . import capture_buffer as buf
 from . import consent
 from . import jinn_layer
 from . import ledger_view
+from . import onboarding
 from . import pickup
 from . import skills_install
 
@@ -462,4 +463,16 @@ def register(ctx) -> None:
         "corpus",
         handler=_handle_corpus,
         description="Search the public Jinn corpus.",
+    )
+    # `jinn-agent onboarding [--replay]` — the guided first run (mono#1405).
+    # A terminal subcommand (blocking reads), NOT a slash command: the flow
+    # reuses consent.run_consent_flow, whose input() would deadlock a TUI
+    # session. Returning operators (consent recorded + ledger non-empty) get
+    # a no-op; --replay re-renders without re-asking.
+    ctx.register_cli_command(
+        "onboarding",
+        help="Guided first-run onboarding (consent → publish → rewards → signals).",
+        setup_fn=onboarding.setup_parser,
+        handler_fn=onboarding.cli_handler,
+        description="Walk the core loop once, one confirmed step at a time. --replay re-shows it.",
     )
