@@ -151,10 +151,23 @@ def derive_terms(user_message: str, max_terms: int = 2) -> List[str]:
 
 # ── Payload classification + adopters ────────────────────────────────────────
 
-def classify_payload(trace: Dict[str, Any]) -> str:
-    """Payload type of a corpus trace. v0 knows 'skill'; everything else is
-    'unknown' and is never adopted (only mentioned)."""
-    steps = trace.get("steps")
+def classify_payload(payload: Dict[str, Any]) -> str:
+    """Payload type of a corpus record or trace envelope.
+
+    v0 knows 'skill' (first-class ``jinn.skill.v1`` artifact or seeded trace
+    ``skill.md`` step); everything else is 'unknown' and is never adopted.
+    """
+    artifacts = payload.get("artifacts")
+    if isinstance(artifacts, list):
+        for artifact in artifacts:
+            if isinstance(artifact, dict) and artifact.get("artifactType") == skills_install.SKILL_ARTIFACT_TYPE:
+                return "skill"
+        try:
+            trace, _sha = skills_install._extract_trace(payload)
+        except Exception:
+            return "unknown"
+        return classify_payload(trace)
+    steps = payload.get("steps")
     if isinstance(steps, list):
         for step in steps:
             attrs = step.get("attributes") if isinstance(step, dict) else None
@@ -237,19 +250,18 @@ def _pickup_inner(
             continue
         try:
             record = json.loads(out)
-            trace, _sha = skills_install._extract_trace(record)
+            extracted = skills_install.extract_skill(record, ref)
         except Exception:
             continue
+        if extracted is None:
+            continue
 
-        payload_type = classify_payload(trace)
-        tier = str(((trace.get("outcome") or {}).get("verifiabilityTier")) or "")
-        summary = str(((trace.get("task") or {}).get("summary")) or ref)[:120]
+        payload_type = classify_payload(record)
+        tier = extracted.tier
+        summary = extracted.summary
+        slug = extracted.slug
 
         if payload_type == "skill":
-            try:
-                _md, slug = skills_install._skill_md_and_slug(trace, ref)
-            except Exception:
-                continue
             if slug in installed:
                 continue
             if tier_at_least(tier, threshold):

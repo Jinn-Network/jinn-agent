@@ -414,23 +414,24 @@ def _tool_corpus_fetch(args: Dict[str, Any], **_kw: Any) -> str:
         return f"corpus get unavailable: {out}"
     try:
         record = json.loads(out)
-        trace, _sha = skills_install._extract_trace(record)
+        extracted = skills_install.extract_skill(record, ref)
     except Exception as exc:
-        return f"record is not readable as a trace envelope: {exc}"
-    tier = str(((trace.get("outcome") or {}).get("verifiabilityTier")) or "unknown")
-    summary = str(((trace.get("task") or {}).get("summary")) or "")
-    steps = trace.get("steps") or []
-    skill_md = None
-    for step in steps:
-        attrs = step.get("attributes") if isinstance(step, dict) else None
-        if isinstance(attrs, dict) and isinstance(attrs.get("skill.md"), str):
-            skill_md = attrs["skill.md"]
-            break
-    header = f"[{tier}] {summary}"
-    if skill_md is not None:
-        body = skill_md[:8000]
-        return f"{header}\n\n{body}"
-    return f"{header}\n\n(trace envelope with {len(steps)} steps; no skill.md payload)"
+        return f"record is not readable: {exc}"
+    if extracted is None:
+        return (
+            f"record {ref!r} carries no installable skill "
+            f"(neither {skills_install.SKILL_ARTIFACT_TYPE} nor a seeded trace with skill.md)"
+        )
+    tier = extracted.tier or "unknown"
+    header = f"[{tier}] {extracted.summary}"
+    body = extracted.skill_md[:8000]
+    if extracted.shape == skills_install.SKILL_ARTIFACT_TYPE:
+        kind = extracted.shape
+        if extracted.companion_files:
+            extras = ", ".join(path for path, _ in extracted.companion_files)
+            return f"{header}\n({kind}; companion files: {extras})\n\n{body}"
+        return f"{header}\n({kind})\n\n{body}"
+    return f"{header}\n\n{body}"
 
 
 # ── Registration ─────────────────────────────────────────────────────────────
