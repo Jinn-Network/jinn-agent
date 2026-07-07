@@ -32,6 +32,7 @@ from typing import Any, Dict, Optional, Set
 from . import capture_buffer as buf
 from . import consent
 from . import jinn_layer
+from . import ledger_view
 from . import pickup
 from . import skills_install
 
@@ -288,7 +289,11 @@ def _handle_jinn(command_args: str = "", session_id: str = "", task_id: str = ""
     if sub == "preview":
         pending = _latest_pending()
         if pending is None:
-            return "No pending trace to preview — finish a task first."
+            # Design requirement iv: preview is reachable before any publish.
+            # With no task yet, show the labelled example fixture rather than
+            # an empty screen. Does not mark previewed — the real gate stays
+            # on a real trace.
+            return consent.render_preview_example()
         code, out = jinn_layer.capture_preview(pending, runner=_runner)
         if code == 0:
             consent.mark_previewed()
@@ -296,6 +301,17 @@ def _handle_jinn(command_args: str = "", session_id: str = "", task_id: str = ""
         return f"preview failed:\n{out}"
 
     if sub == "ledger":
+        # Prefer structured rows (design 1b columns + tier chips + retry
+        # sub-line + exact empty state). Degrade to the layer's raw text when
+        # the installed layer predates `ledger --json`.
+        jcode, jout = jinn_layer.ledger_json(runner=_runner)
+        if jcode == 0:
+            try:
+                rows = ledger_view.rows_from_json(json.loads(jout))
+            except json.JSONDecodeError:
+                rows = None
+            if rows is not None:
+                return ledger_view.render_ledger(rows, enabled=consent.capture_enabled())
         code, out = jinn_layer.ledger(runner=_runner)
         return out if code == 0 else f"ledger unavailable:\n{out}"
 

@@ -71,6 +71,15 @@ def ledger(runner: Optional[Runner] = None) -> Tuple[int, str]:
     return run(["ledger"], runner)
 
 
+def ledger_json(runner: Optional[Runner] = None) -> Tuple[int, str]:
+    """Structured ledger rows for the fork-side renderer (ledger_view).
+
+    Depends on ``jinn-layer ledger --json`` (harness-layer). When the layer
+    predates that flag it errors and the caller falls back to plain ``ledger``.
+    """
+    return run(["ledger", "--json"], runner)
+
+
 def corpus_search(query: str, runner: Optional[Runner] = None) -> Tuple[int, str]:
     return run(["corpus", "search", query], runner)
 
