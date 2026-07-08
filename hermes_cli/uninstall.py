@@ -30,6 +30,46 @@ def get_project_root() -> Path:
     return Path(__file__).parent.parent.resolve()
 
 
+def _is_git_working_tree(path: Path) -> bool:
+    """True when ``path`` is a git working tree.
+
+    Checks for ``.git`` existing as EITHER a directory (normal clone) or a
+    file (linked worktrees store ``gitdir: ...`` in a plain file).
+    """
+    return (path / ".git").exists()
+
+
+def remove_project_root(
+    project_root: Path, *, force_repo: bool = False, dry_run: bool = False
+) -> bool:
+    """Remove the code checkout, refusing git working trees unless forced.
+
+    ``get_project_root()`` resolves to whatever checkout the CLI is running
+    from — which may be a development repo with uncommitted work, not just a
+    managed install. Deleting a git working tree therefore requires the
+    explicit ``--force-repo`` opt-in.
+
+    Returns True when the directory was removed (or would be, under
+    ``dry_run``); False when missing, refused, or the removal failed.
+    """
+    if not project_root.exists():
+        return False
+    if _is_git_working_tree(project_root) and not force_repo:
+        log_warn(f"Refusing to remove {project_root}: it is a git working tree.")
+        log_info("Uncommitted work would be lost. Re-run with --force-repo to remove it anyway.")
+        return False
+    if dry_run:
+        return True
+    try:
+        shutil.rmtree(project_root)
+        log_success(f"Removed {project_root}")
+        return True
+    except Exception as e:
+        log_warn(f"Could not fully remove {project_root}: {e}")
+        log_info("You may need to manually remove it")
+        return False
+
+
 def find_shell_configs() -> list:
     """Find shell configuration files that might have PATH entries."""
     home = Path.home()
@@ -96,25 +136,52 @@ def remove_path_from_shell_configs():
     return removed_from
 
 
-def remove_wrapper_script():
-    """Remove the hermes wrapper script if it exists."""
-    wrapper_paths = [
+def _wrapper_candidate_paths() -> "list[Path]":
+    """Locations where the installer may have placed the ``hermes`` launcher."""
+    return [
         Path.home() / ".local" / "bin" / "hermes",
         Path("/usr/local/bin/hermes"),
     ]
-    
+
+
+def remove_wrapper_script(project_root: Path, dry_run: bool = False) -> list:
+    """Remove the ``hermes`` launcher(s) belonging to THIS install only.
+
+    The installer writes a bash shim that ``exec``s
+    ``<project_root>/venv/bin/hermes``; older installs symlinked straight at
+    the venv entry point. A machine can carry several hermes installs, each
+    with its own launcher — matching on generic content markers like
+    ``hermes_cli`` deletes OTHER installs' launchers (``read_text`` on a
+    symlink follows it to the target). So:
+
+    - symlinks are removed only when their resolved target lives inside this
+      install's project root;
+    - regular shim scripts are removed only when their content references
+      this install's project root path.
+    """
+    root = project_root.resolve()
     removed = []
-    for wrapper in wrapper_paths:
-        if wrapper.exists():
-            try:
-                # Check if it's our wrapper (contains hermes_cli reference)
-                content = wrapper.read_text()
-                if 'hermes_cli' in content or 'hermes-agent' in content:
-                    wrapper.unlink()
-                    removed.append(wrapper)
-            except Exception as e:
-                log_warn(f"Could not remove {wrapper}: {e}")
-    
+    for wrapper in _wrapper_candidate_paths():
+        try:
+            if wrapper.is_symlink():
+                # os.readlink + manual join handles dangling links too.
+                target = Path(os.readlink(wrapper))
+                if not target.is_absolute():
+                    target = wrapper.parent / target
+                target = target.resolve()
+                if target != root and root not in target.parents:
+                    continue
+            elif wrapper.exists():
+                if str(root) not in wrapper.read_text():
+                    continue
+            else:
+                continue
+            if not dry_run:
+                wrapper.unlink()
+            removed.append(wrapper)
+        except Exception as e:
+            log_warn(f"Could not remove {wrapper}: {e}")
+
     return removed
 
 
@@ -131,7 +198,7 @@ def _node_symlink_candidate_dirs() -> "list[Path]":
     return dirs
 
 
-def remove_node_symlinks(hermes_home: Path) -> list:
+def remove_node_symlinks(hermes_home: Path, dry_run: bool = False) -> list:
     """Remove the node/npm/npx symlinks the installer placed on PATH.
 
     The POSIX installer (``scripts/install.sh`` / ``scripts/lib/node-bootstrap.sh``)
@@ -168,7 +235,8 @@ def remove_node_symlinks(hermes_home: Path) -> list:
                 target = target.resolve()
 
                 if target == node_dir or node_dir in target.parents:
-                    link.unlink()
+                    if not dry_run:
+                        link.unlink()
                     removed.append(link)
             except Exception as e:
                 log_warn(f"Could not remove {link}: {e}")
@@ -574,6 +642,17 @@ def run_uninstall(args):
     """
     project_root = get_project_root()
     hermes_home = get_hermes_home()
+    force_repo = bool(getattr(args, "force_repo", False))
+
+    # --dry-run: print what an uninstall WOULD remove, touch nothing, exit.
+    if getattr(args, "dry_run", False):
+        _print_dry_run_plan(
+            project_root=project_root,
+            hermes_home=hermes_home,
+            full_uninstall=bool(getattr(args, "full", False)),
+            force_repo=force_repo,
+        )
+        return
 
     # Detect named profiles when uninstalling from the default root —
     # offer to clean them up too instead of leaving zombie HERMES_HOMEs
@@ -596,6 +675,7 @@ def run_uninstall(args):
             full_uninstall=full_uninstall,
             remove_profiles=False,
             named_profiles=named_profiles,
+            force_repo=force_repo,
         )
         return
 
@@ -701,7 +781,38 @@ def run_uninstall(args):
         full_uninstall=full_uninstall,
         remove_profiles=remove_profiles,
         named_profiles=named_profiles,
+        force_repo=force_repo,
     )
+
+
+def _print_dry_run_plan(
+    *,
+    project_root: Path,
+    hermes_home: Path,
+    full_uninstall: bool,
+    force_repo: bool,
+) -> None:
+    """Print what an uninstall would remove without touching anything."""
+    print()
+    print(color("Dry run — nothing will be removed.", Colors.CYAN, Colors.BOLD))
+    print()
+    log_info("Would stop and remove the gateway service and processes (if any)")
+    log_info("Would strip Hermes PATH entries from shell configs"
+             + (" and the Windows User registry" if _is_windows() else ""))
+
+    for wrapper in remove_wrapper_script(project_root, dry_run=True):
+        log_info(f"Would remove launcher {wrapper}")
+    for link in remove_node_symlinks(hermes_home, dry_run=True):
+        log_info(f"Would remove node symlink {link}")
+
+    if remove_project_root(project_root, force_repo=force_repo, dry_run=True):
+        log_info(f"Would remove code checkout {project_root}")
+
+    if full_uninstall:
+        log_info(f"Would remove configuration and data at {hermes_home}")
+    else:
+        log_info(f"Would keep configuration and data at {hermes_home}")
+    print()
 
 
 def _perform_uninstall(
@@ -711,6 +822,7 @@ def _perform_uninstall(
     full_uninstall: bool,
     remove_profiles: bool,
     named_profiles: list,
+    force_repo: bool = False,
 ) -> None:
     """Execute the uninstall steps. Shared by the interactive and ``--yes``
     paths so the destructive sequence lives in exactly one place.
@@ -760,9 +872,9 @@ def _perform_uninstall(
         else:
             log_info("No Hermes-set User env vars to remove")
     
-    # 3. Remove wrapper script
+    # 3. Remove wrapper script (only launchers pointing into THIS install)
     log_info("Removing hermes command...")
-    removed_wrappers = remove_wrapper_script()
+    removed_wrappers = remove_wrapper_script(project_root)
     if removed_wrappers:
         for wrapper in removed_wrappers:
             log_success(f"Removed {wrapper}")
@@ -798,24 +910,18 @@ def _perform_uninstall(
     except Exception as e:
         log_warn(f"Could not remove desktop GUI artifacts: {e}")
 
-    # 4. Remove installation directory (code)
+    # 4. Remove installation directory (code). Refuses git working trees
+    #    (dev checkouts, worktrees — uncommitted work) unless --force-repo.
     log_info("Removing installation directory...")
-    
-    # Check if we're running from within the install dir
-    # We need to be careful here
-    try:
-        if project_root.exists():
-            # If the install is inside ~/.hermes/, just remove the hermes-agent subdir
-            if hermes_home in project_root.parents or project_root.parent == hermes_home:
-                shutil.rmtree(project_root)
-                log_success(f"Removed {project_root}")
-            else:
-                # Installation is somewhere else entirely
-                shutil.rmtree(project_root)
-                log_success(f"Removed {project_root}")
-    except Exception as e:
-        log_warn(f"Could not fully remove {project_root}: {e}")
-        log_info("You may need to manually remove it")
+    remove_project_root(project_root, force_repo=force_repo)
+    # A refused git checkout inside $HERMES_HOME (the standard
+    # ~/.hermes/hermes-agent layout) must not be swept away by the
+    # full-uninstall rmtree(hermes_home) below.
+    project_root_protected = (
+        project_root.exists()
+        and _is_git_working_tree(project_root)
+        and not force_repo
+    )
 
     # 4b. Remove Windows-only installer artifacts that are NOT user data:
     #     PortableGit, bundled Node, gateway-service dir.  Installer put them
@@ -844,13 +950,20 @@ def _perform_uninstall(
                 _uninstall_profile(prof)
 
         log_info("Removing configuration and data...")
-        try:
-            if hermes_home.exists():
-                shutil.rmtree(hermes_home)
-                log_success(f"Removed {hermes_home}")
-        except Exception as e:
-            log_warn(f"Could not fully remove {hermes_home}: {e}")
-            log_info("You may need to manually remove it")
+        if project_root_protected and (
+            hermes_home in project_root.parents or project_root == hermes_home
+        ):
+            log_warn(f"Keeping {hermes_home}: the protected git working tree "
+                     f"{project_root} lives inside it.")
+            log_info("Re-run with --force-repo to remove everything.")
+        else:
+            try:
+                if hermes_home.exists():
+                    shutil.rmtree(hermes_home)
+                    log_success(f"Removed {hermes_home}")
+            except Exception as e:
+                log_warn(f"Could not fully remove {hermes_home}: {e}")
+                log_info("You may need to manually remove it")
     else:
         log_info(f"Keeping configuration and data in {hermes_home}")
     
@@ -886,11 +999,13 @@ def _perform_uninstall(
 class _UninstallArgs:
     """Lightweight args namespace for the module entrypoint below."""
 
-    def __init__(self, *, mode: str):
+    def __init__(self, *, mode: str, force_repo: bool = False):
         self.gui = mode == "gui"
         self.gui_summary = False
         self.full = mode == "full"
         self.yes = True  # the module entrypoint is always non-interactive
+        self.dry_run = False
+        self.force_repo = force_repo
 
 
 def main(argv=None) -> int:
@@ -916,8 +1031,13 @@ def main(argv=None) -> int:
         required=True,
         help="gui = Chat GUI only; lite = GUI + agent, keep data; full = everything",
     )
+    parser.add_argument(
+        "--force-repo",
+        action="store_true",
+        help="Allow removing the code directory even when it is a git working tree",
+    )
     ns = parser.parse_args(argv)
-    args = _UninstallArgs(mode=ns.mode)
+    args = _UninstallArgs(mode=ns.mode, force_repo=ns.force_repo)
 
     if args.gui:
         run_gui_uninstall(args)

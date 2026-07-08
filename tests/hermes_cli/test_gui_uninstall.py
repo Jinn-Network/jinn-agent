@@ -243,7 +243,7 @@ def test_run_uninstall_yes_keep_data_is_non_interactive(tmp_path, monkeypatch):
     monkeypatch.setattr(uninstall, "get_project_root", lambda: fake_code)
     monkeypatch.setattr(uninstall, "uninstall_gateway_service", lambda: False)
     monkeypatch.setattr(uninstall, "remove_path_from_shell_configs", lambda: [])
-    monkeypatch.setattr(uninstall, "remove_wrapper_script", lambda: [])
+    monkeypatch.setattr(uninstall, "remove_wrapper_script", lambda root, dry_run=False: [])
     monkeypatch.setattr(uninstall, "remove_node_symlinks", lambda h: [])
     monkeypatch.setattr(uninstall, "_discover_named_profiles", lambda: [])
     # Make input() blow up so a regression that reaches a prompt fails loudly.
@@ -277,7 +277,7 @@ def test_run_uninstall_yes_full_wipes_home(tmp_path, monkeypatch):
     monkeypatch.setattr(uninstall, "get_project_root", lambda: fake_code)
     monkeypatch.setattr(uninstall, "uninstall_gateway_service", lambda: False)
     monkeypatch.setattr(uninstall, "remove_path_from_shell_configs", lambda: [])
-    monkeypatch.setattr(uninstall, "remove_wrapper_script", lambda: [])
+    monkeypatch.setattr(uninstall, "remove_wrapper_script", lambda root, dry_run=False: [])
     monkeypatch.setattr(uninstall, "remove_node_symlinks", lambda h: [])
     monkeypatch.setattr(uninstall, "_discover_named_profiles", lambda: [])
     monkeypatch.setattr("builtins.input", lambda *a, **k: pytest.fail("prompted in --yes mode"))

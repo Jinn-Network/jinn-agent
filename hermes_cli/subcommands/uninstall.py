@@ -38,4 +38,15 @@ def build_uninstall_parser(subparsers, *, cmd_uninstall: Callable) -> None:
     uninstall_parser.add_argument(
         "--yes", "-y", action="store_true", help="Skip confirmation prompts"
     )
+    uninstall_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="List what would be removed without removing anything",
+    )
+    uninstall_parser.add_argument(
+        "--force-repo",
+        action="store_true",
+        help="Allow removing the code directory even when it is a git "
+        "working tree (uncommitted work will be lost)",
+    )
     uninstall_parser.set_defaults(func=cmd_uninstall)
