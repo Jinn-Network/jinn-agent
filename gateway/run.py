@@ -2360,20 +2360,29 @@ def _get_channel_override(
 
 
 def _resolve_hermes_bin() -> Optional[list[str]]:
-    """Resolve the Hermes update command as argv parts.
+    """Resolve this install's CLI command as argv parts (restart/update flows).
 
-    Tries in order:
-    1. ``shutil.which("hermes")`` — standard PATH lookup
-    2. ``sys.executable -m hermes_cli.main`` — fallback when Hermes is running
-       from a venv/module invocation and the ``hermes`` shim is not on PATH
+    A bare ``hermes`` on PATH may belong to a stock upstream install rather
+    than this fork, so it is never used — a detached ``gateway restart``
+    through it would relaunch the wrong install. Tries in order:
+    1. this checkout's own ``bin/jinn-agent`` entrypoint (POSIX sh script,
+       skipped on Windows)
+    2. ``shutil.which("jinn-agent")`` — the PATH-installed fork shim
+    3. ``sys.executable -m hermes_cli.main`` — the interpreter we are already
+       running from, which is by definition this install
 
-    Returns argv parts ready for quoting/joining, or ``None`` if neither works.
+    Returns argv parts ready for quoting/joining, or ``None`` if none works.
     """
     import shutil
 
-    hermes_bin = shutil.which("hermes")
-    if hermes_bin:
-        return [hermes_bin]
+    if sys.platform != "win32":
+        repo_entrypoint = Path(__file__).resolve().parent.parent / "bin" / "jinn-agent"
+        if repo_entrypoint.is_file() and os.access(repo_entrypoint, os.X_OK):
+            return [str(repo_entrypoint)]
+
+        jinn_bin = shutil.which("jinn-agent")
+        if jinn_bin:
+            return [jinn_bin]
 
     try:
         import importlib.util

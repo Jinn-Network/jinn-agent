@@ -160,34 +160,44 @@ class TestHandleUpdateCommand:
         assert "hermes_cli.main" in joined or "bash" in call_args[0]
 
     @pytest.mark.asyncio
-    async def test_resolve_hermes_bin_prefers_which(self, tmp_path):
-        """_resolve_hermes_bin returns argv parts from shutil.which when available."""
+    async def test_resolve_hermes_bin_prefers_jinn_agent_shim(self, tmp_path):
+        """_resolve_hermes_bin uses the PATH-installed jinn-agent shim, never a bare hermes."""
         from gateway.run import _resolve_hermes_bin
 
-        with patch("shutil.which", return_value="/custom/path/hermes"):
+        fake_file = str(tmp_path / "gateway" / "run.py")
+        which_map = {
+            "hermes": "/custom/path/hermes",
+            "jinn-agent": "/custom/path/jinn-agent",
+        }
+        with patch("gateway.run.__file__", fake_file), \
+             patch("shutil.which", side_effect=which_map.get):
             result = _resolve_hermes_bin()
 
-        assert result == ["/custom/path/hermes"]
+        assert result == ["/custom/path/jinn-agent"]
 
     @pytest.mark.asyncio
-    async def test_resolve_hermes_bin_fallback(self):
+    async def test_resolve_hermes_bin_fallback(self, tmp_path):
         """_resolve_hermes_bin falls back to sys.executable argv when which fails."""
         import sys
         from gateway.run import _resolve_hermes_bin
 
+        fake_file = str(tmp_path / "gateway" / "run.py")
         fake_spec = MagicMock()
-        with patch("shutil.which", return_value=None), \
+        with patch("gateway.run.__file__", fake_file), \
+             patch("shutil.which", return_value=None), \
              patch("importlib.util.find_spec", return_value=fake_spec):
             result = _resolve_hermes_bin()
 
         assert result == [sys.executable, "-m", "hermes_cli.main"]
 
     @pytest.mark.asyncio
-    async def test_resolve_hermes_bin_returns_none_when_both_fail(self):
+    async def test_resolve_hermes_bin_returns_none_when_both_fail(self, tmp_path):
         """_resolve_hermes_bin returns None when both strategies fail."""
         from gateway.run import _resolve_hermes_bin
 
-        with patch("shutil.which", return_value=None), \
+        fake_file = str(tmp_path / "gateway" / "run.py")
+        with patch("gateway.run.__file__", fake_file), \
+             patch("shutil.which", return_value=None), \
              patch("importlib.util.find_spec", return_value=None):
             result = _resolve_hermes_bin()
 
