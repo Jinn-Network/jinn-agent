@@ -59,6 +59,8 @@ class CorpusRunner:
 
     def __call__(self, argv: list[str]) -> tuple[int, str]:
         self.calls.append(argv)
+        if argv[1:3] == ["skills", "install"]:
+            return 1, "skills install not available in test runner"
         if argv[1] == "corpus" and argv[2] == "search":
             hits = [{"ref": REF, "tags": ["tdd"], "summary": "Seed import: acme/skills/tdd"}] if self.search_hit else []
             return 0, json.dumps(hits)
@@ -188,3 +190,72 @@ def test_corpus_fetch_tool_returns_skill_content(tmp_path):
         jinn._runner = None
     assert "[user-accepted]" in out
     assert "Red, green, refactor." in out
+
+
+def skill_only_record(tier: str = "evaluator-verified") -> dict:
+    payload = {
+        "schemaVersion": "jinn.skill.v1",
+        "skill": {
+            "name": "tdd-distilled",
+            "description": "Distilled TDD pattern",
+            "skillMd": "# tdd-distilled\n\nUse red-green-refactor.",
+        },
+        "files": [],
+        "provenance": {
+            "kind": "distilled",
+            "sourceEnvelopeCids": ["bafySrc"],
+            "operator": {"safeAddress": "0x1111111111111111111111111111111111111111"},
+            "verifiabilityTier": tier,
+        },
+    }
+    content = json.dumps(payload).encode("utf-8")
+    return {
+        "ref": REF,
+        "artifacts": [{
+            "artifactType": "jinn.skill.v1",
+            "sha256": hashlib.sha256(content).hexdigest(),
+            "contentBase64": base64.b64encode(content).decode("ascii"),
+        }],
+    }
+
+
+class SkillOnlyCorpusRunner:
+    def __init__(self, tier: str = "evaluator-verified", search_hit: bool = True):
+        self.record = skill_only_record(tier=tier)
+        self.search_hit = search_hit
+        self.calls: list[list[str]] = []
+
+    def __call__(self, argv: list[str]) -> tuple[int, str]:
+        self.calls.append(argv)
+        if argv[1:3] == ["skills", "install"]:
+            return 1, "skills install not available in test runner"
+        if argv[1] == "corpus" and argv[2] == "search":
+            hits = [{"ref": REF, "tags": ["tdd"], "summary": "Distilled TDD pattern"}] if self.search_hit else []
+            return 0, json.dumps(hits)
+        if argv[1] == "corpus" and argv[2] == "get":
+            return 0, json.dumps(self.record)
+        return 1, f"unexpected: {argv}"
+
+
+def test_skill_only_record_adopts_using_provenance_tier(tmp_path):
+    runner = SkillOnlyCorpusRunner(tier="evaluator-verified")
+    result = pickup.pickup(MSG, runner=runner)
+    assert result is not None
+    assert "Adopted automatically (verified)" in result["context"]
+    assert (tmp_path / "skills" / "tdd-distilled" / "SKILL.md").exists()
+
+
+def test_skill_only_classify_payload(tmp_path):
+    assert pickup.classify_payload(skill_only_record()) == "skill"
+
+
+def test_corpus_fetch_skill_only_record(tmp_path):
+    runner = SkillOnlyCorpusRunner()
+    jinn._runner = runner
+    try:
+        out = jinn._tool_corpus_fetch({"ref": REF})
+    finally:
+        jinn._runner = None
+    assert "[evaluator-verified]" in out
+    assert "jinn.skill.v1" in out
+    assert "Use red-green-refactor." in out

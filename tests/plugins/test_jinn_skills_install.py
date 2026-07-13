@@ -70,6 +70,8 @@ class CorpusGetRunner:
 
     def __call__(self, argv: list[str]) -> tuple[int, str]:
         self.calls.append(argv)
+        if argv[1:3] == ["skills", "install"]:
+            return 1, "skills install not available in test runner"
         assert argv[1:3] == ["corpus", "get"]
         return 0, json.dumps(self.record)
 
@@ -108,7 +110,7 @@ def test_declined_consent_does_not_block_install(tmp_path):
         jinn._runner = None
     assert "installed" in out
     assert (tmp_path / "skills" / "test-driven-development" / "SKILL.md").exists()
-    assert runner.calls[0][1:3] == ["corpus", "get"]
+    assert any(call[1:3] == ["corpus", "get"] for call in runner.calls)
 
 
 def test_list_and_uninstall_only_touch_jinn_installed(tmp_path):
@@ -145,3 +147,71 @@ def test_record_without_skill_md_refuses(tmp_path):
     runner = CorpusGetRunner(corpus_record(trace))
     with pytest.raises(ValueError, match="not an installable skill"):
         skills_install.install(REF, runner=runner)
+
+
+SKILL_ONLY_MD = "---\nname: write-tests\n---\n\n# write-tests\n\nDistilled pattern.\n"
+SKILL_ONLY_REF = "bafyDistilledSkill"
+
+
+def skill_only_record(
+    *,
+    tier: str = "evaluator-verified",
+    skill_md: str = SKILL_ONLY_MD,
+    tamper_hash: bool = False,
+) -> dict:
+    payload = {
+        "schemaVersion": skills_install.SKILL_ARTIFACT_TYPE,
+        "skill": {
+            "name": "write-tests",
+            "description": "Write tests before code",
+            "skillMd": skill_md,
+        },
+        "files": [],
+        "provenance": {
+            "kind": "distilled",
+            "sourceEnvelopeCids": ["bafySrc1"],
+            "operator": {"safeAddress": "0x1111111111111111111111111111111111111111"},
+            "solverType": "skill-distiller.v0",
+            "verifiabilityTier": tier,
+        },
+    }
+    content = json.dumps(payload).encode("utf-8")
+    sha = hashlib.sha256(content).hexdigest()
+    if tamper_hash:
+        sha = "0" * 64
+    return {
+        "ref": SKILL_ONLY_REF,
+        "envelope": {"solverType": "skill-distiller.v0", "role": "solution"},
+        "artifacts": [
+            {
+                "artifactType": skills_install.SKILL_ARTIFACT_TYPE,
+                "sha256": sha,
+                "contentBase64": base64.b64encode(content).decode("ascii"),
+            }
+        ],
+    }
+
+
+def test_install_skill_only_jinn_skill_v1(tmp_path):
+    runner = CorpusGetRunner(skill_only_record())
+    path = skills_install.install(SKILL_ONLY_REF, runner=runner)
+    written = Path(path)
+    assert written == tmp_path / "skills" / "write-tests" / "SKILL.md"
+    assert written.read_text() == SKILL_ONLY_MD
+
+
+def test_extract_skill_prefers_jinn_skill_v1_over_trace(tmp_path):
+    trace = trace_envelope(skill_md="# seeded\n")
+    dual = skill_only_record()
+    dual["artifacts"].append(corpus_record(trace)["artifacts"][0])
+    extracted = skills_install.extract_skill(dual, SKILL_ONLY_REF)
+    assert extracted is not None
+    assert extracted.shape == skills_install.SKILL_ARTIFACT_TYPE
+    assert extracted.tier == "evaluator-verified"
+    assert extracted.skill_md == SKILL_ONLY_MD
+
+
+def test_skill_only_bad_hash_refuses_install(tmp_path):
+    runner = CorpusGetRunner(skill_only_record(tamper_hash=True))
+    with pytest.raises(ValueError, match="sha256 mismatch"):
+        skills_install.install(SKILL_ONLY_REF, runner=runner)
